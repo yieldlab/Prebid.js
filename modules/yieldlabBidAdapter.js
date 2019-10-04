@@ -127,7 +127,10 @@ export const spec = {
  * @returns {Boolean}
  */
 function isVideo (format) {
-  return utils.deepAccess(format, 'mediaTypes.video')
+  let videoMediaType = utils.deepAccess(format, 'mediaTypes.video')
+  let paramType = utils.deepAccess(format, 'params.type')
+  let videoParamType = (paramType === 'outstream' || paramType === 'instream')
+  return (videoMediaType && videoParamType)
 }
 
 /**
