@@ -35,7 +35,9 @@ export const spec = {
     }
 
     utils._each(validBidRequests, function (bid) {
-      adslotIds.push(bid.params.adslotId)
+      if (!adslotIds.includes(bid.params.adslotId)) {
+        adslotIds.push(bid.params.adslotId)
+      }
       if (bid.params.targeting) {
         query.t = createQueryString(bid.params.targeting)
       }
