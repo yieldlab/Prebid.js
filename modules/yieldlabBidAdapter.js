@@ -39,6 +39,9 @@ export const spec = {
       if (bid.params.targeting) {
         query.t = createQueryString(bid.params.targeting)
       }
+      if (bid.params.ids) {
+        query.ids = encodeIds(bid.params.ids)
+      }
     })
 
     if (bidderRequest && bidderRequest.gdprConsent) {
@@ -80,6 +83,8 @@ export const spec = {
         const primarysize = bidRequest.sizes.length === 2 && !utils.isArray(bidRequest.sizes[0]) ? bidRequest.sizes : bidRequest.sizes[0]
         const customsize = bidRequest.params.adSize !== undefined ? parseSize(bidRequest.params.adSize) : primarysize
         const extId = bidRequest.params.extId !== undefined ? '&id=' + bidRequest.params.extId : ''
+        const namedIds = bidRequest.params.ids !== undefined ? '&ids=' + encodeIds(bidRequest.params.ids) : ''
+
         const bidResponse = {
           requestId: bidRequest.bidId,
           cpm: matchedBid.price / 100,
@@ -91,7 +96,7 @@ export const spec = {
           netRevenue: false,
           ttl: BID_RESPONSE_TTL_SEC,
           referrer: '',
-          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}"></script>`
+          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${namedIds}"></script>`
         }
 
         if (isVideo(bidRequest)) {
@@ -101,7 +106,7 @@ export const spec = {
             bidResponse.height = playersize[1]
           }
           bidResponse.mediaType = VIDEO
-          bidResponse.vastUrl = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}`
+          bidResponse.vastUrl = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${namedIds}`
 
           if (isOutstream(bidRequest)) {
             const renderer = Renderer.install({
@@ -157,6 +162,21 @@ function getPlayerSize (format) {
  */
 function parseSize (size) {
   return size.split('x').map(Number)
+}
+
+/**
+ * Encodes Ids to correct syntax
+ * @param {Object} id
+ * @returns {String}
+ */
+function encodeIds (ids) {
+  let str = []
+  for (var id of ids) {
+    if (id.name && id.value) {
+      str.push(encodeURIComponent(id.name) + ':' + encodeURIComponent(id.value))
+    }
+  }
+  return str.join(',')
 }
 
 /**
