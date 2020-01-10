@@ -7,7 +7,6 @@ const REQUEST = {
   'params': {
     'adslotId': '1111',
     'supplyId': '2222',
-    'adSize': '728x90',
     'targeting': {
       'key1': 'value1',
       'key2': 'value2'
@@ -27,7 +26,8 @@ const RESPONSE = {
   format: 0,
   id: 1111,
   price: 1,
-  pid: 2222
+  pid: 2222,
+  adSize: '728x90'
 }
 
 describe('yieldlabBidAdapter', function () {
@@ -44,8 +44,7 @@ describe('yieldlabBidAdapter', function () {
       const request = {
         'params': {
           'adslotId': '1111',
-          'supplyId': '2222',
-          'adSize': '728x90'
+          'supplyId': '2222'
         }
       }
       expect(spec.isBidRequestValid(request)).to.equal(true)
@@ -104,7 +103,7 @@ describe('yieldlabBidAdapter', function () {
       expect(result[0].netRevenue).to.equal(false)
       expect(result[0].ttl).to.equal(300)
       expect(result[0].referrer).to.equal('')
-      expect(result[0].ad).to.include('<script src="https://ad.yieldlab.net/d/1111/2222/728x90?ts=')
+      expect(result[0].ad).to.include('<script src="https://ad.yieldlab.net/d/1111/2222/?ts=')
       expect(result[0].ad).to.include('&id=abc')
     })
 
@@ -128,7 +127,7 @@ describe('yieldlabBidAdapter', function () {
       expect(result[0].netRevenue).to.equal(false)
       expect(result[0].ttl).to.equal(300)
       expect(result[0].referrer).to.equal('')
-      expect(result[0].ad).to.include('<script src="https://ad.yieldlab.net/d/1111/2222/728x90?ts=')
+      expect(result[0].ad).to.include('<script src="https://ad.yieldlab.net/d/1111/2222/?ts=')
       expect(result[0].ad).to.include('&id=abc')
     })
 
