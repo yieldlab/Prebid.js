@@ -27,7 +27,7 @@ const RESPONSE = {
   id: 1111,
   price: 1,
   pid: 2222,
-  adSize: '728x90'
+  adsize: '728x90'
 }
 
 describe('yieldlabBidAdapter', function () {
