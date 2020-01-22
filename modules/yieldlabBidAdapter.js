@@ -31,7 +31,8 @@ export const spec = {
     const timestamp = Date.now()
     const query = {
       ts: timestamp,
-      json: true
+      json: true,
+      pvid: true
     }
 
     utils._each(validBidRequests, function (bid) {
@@ -89,6 +90,7 @@ export const spec = {
         const customsize = bidRequest.params.adSize !== undefined ? parseSize(bidRequest.params.adSize) : primarysize
         const extId = bidRequest.params.extId !== undefined ? '&id=' + bidRequest.params.extId : ''
         const adType = matchedBid.adtype !== undefined ? matchedBid.adtype : ''
+        const pvId = matchedBid.pvid !== undefined ? '&pvid=' + matchedBid.pvid : ''
 
         const bidResponse = {
           requestId: bidRequest.bidId,
@@ -101,7 +103,7 @@ export const spec = {
           netRevenue: false,
           ttl: BID_RESPONSE_TTL_SEC,
           referrer: '',
-          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}"></script>`
+          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}"></script>`
         }
 
         if (isVideo(bidRequest, adType)) {
@@ -111,7 +113,7 @@ export const spec = {
             bidResponse.height = playersize[1]
           }
           bidResponse.mediaType = VIDEO
-          bidResponse.vastUrl = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}`
+          bidResponse.vastUrl = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}`
 
           if (isOutstream(bidRequest)) {
             const renderer = Renderer.install({
