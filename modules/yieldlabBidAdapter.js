@@ -1,7 +1,7 @@
 import * as utils from '../src/utils'
 import { registerBidder } from '../src/adapters/bidderFactory'
 import find from 'core-js/library/fn/array/find'
-import { VIDEO, BANNER } from '../src/mediaTypes'
+import { VIDEO, BANNER, NATIVE } from '../src/mediaTypes'
 import { Renderer } from '../src/Renderer'
 
 const ENDPOINT = 'https://ad.yieldlab.net'
@@ -12,7 +12,7 @@ const OUTSTREAMPLAYER_URL = 'https://ad2.movad.net/dynamic.ad?a=o193092&ma_loadE
 
 export const spec = {
   code: BIDDER_CODE,
-  supportedMediaTypes: [VIDEO, BANNER],
+  supportedMediaTypes: [VIDEO, BANNER, NATIVE],
 
   isBidRequestValid: function (bid) {
     if (bid && bid.params && bid.params.adslotId && bid.params.supplyId) {
@@ -94,7 +94,8 @@ export const spec = {
           netRevenue: false,
           ttl: BID_RESPONSE_TTL_SEC,
           referrer: '',
-          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}"></script>`
+          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}"></script>`,
+          adUrl: `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}`
         }
 
         if (isVideo(bidRequest)) {
