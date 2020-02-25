@@ -95,7 +95,6 @@ export const spec = {
           ttl: BID_RESPONSE_TTL_SEC,
           referrer: '',
           ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}"></script>`,
-          adUrl: `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}`
         }
 
         if (isVideo(bidRequest)) {
@@ -115,6 +114,26 @@ export const spec = {
             })
             renderer.setRender(outstreamRender)
             bidResponse.renderer = renderer
+          }
+        }
+
+        if (isNative(bidRequest, matchedBid.adtype)) {
+          bidResponse.adUrl = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${pvId}`
+          bidResponse.mediaType = NATIVE
+          // native mediatype has to have specific assets
+          bidResponse.native = {
+            title: 'title',
+            body: 'body',
+            image: {
+              height: 1,
+              width: 1
+            },
+            icon: {
+              height: 1,
+              width: 1
+            },
+            sponsoredBy: 'sponsoredBy',
+            clickUrl: 'clickUrl'
           }
         }
 
@@ -142,6 +161,15 @@ function isVideo (format) {
 function isOutstream (format) {
   let context = utils.deepAccess(format, 'mediaTypes.video.context')
   return (context === 'outstream')
+}
+
+/**
+ * Is this a native format?
+ * @param {Object} format
+ * @returns {Boolean}
+ */
+function isNative (format, adtype) {
+  return utils.deepAccess(format, 'mediaTypes.native') && adtype === 'NATIVE'
 }
 
 /**
