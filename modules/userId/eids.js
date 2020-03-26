@@ -81,6 +81,12 @@ const USER_IDS_CONFIG = {
   'netId': {
     source: 'netid.de',
     atype: 1
+  },
+
+  // AUT
+  'aut': {
+    source: 'aut.vm',
+    atype: 1
   }
 };
 
