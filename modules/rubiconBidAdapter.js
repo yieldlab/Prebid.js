@@ -4,12 +4,14 @@ import {config} from '../src/config.js';
 import {BANNER, VIDEO} from '../src/mediaTypes.js';
 
 const DEFAULT_INTEGRATION = 'pbjs_lite';
+const DEFAULT_PBS_INTEGRATION = 'pbjs';
 
 // always use https, regardless of whether or not current page is secure
 export const FASTLANE_ENDPOINT = 'https://fastlane.rubiconproject.com/a/api/fastlane.json';
 export const VIDEO_ENDPOINT = 'https://prebid-server.rubiconproject.com/openrtb2/auction';
 export const SYNC_ENDPOINT = 'https://eus.rubiconproject.com/usync.html';
 
+const GVLID = 52;
 const DIGITRUST_PROP_NAMES = {
   FASTLANE: {
     id: 'dt.id',
@@ -113,6 +115,7 @@ utils._each(sizeMap, (item, key) => sizeMap[item] = key);
 
 export const spec = {
   code: 'rubicon',
+  gvlid: GVLID,
   supportedMediaTypes: [BANNER, VIDEO],
   /**
    * @param {object} bid
@@ -180,6 +183,11 @@ export const spec = {
               // includebidderkeys always false for openrtb
               includebidderkeys: false,
               pricegranularity: getPriceGranularity(config)
+            },
+            bidders: {
+              rubicon: {
+                integration: config.getConfig('rubicon.int_type') || DEFAULT_PBS_INTEGRATION
+              }
             }
           }
         }
@@ -573,7 +581,7 @@ export const spec = {
     const keywords = (params.keywords || []).concat(
       utils.deepAccess(config.getConfig('fpd.user'), 'keywords') || [],
       utils.deepAccess(config.getConfig('fpd.context'), 'keywords') || []);
-    data.kw = keywords.length ? keywords.join(',') : '';
+    data.kw = Array.isArray(keywords) && keywords.length ? keywords.join(',') : '';
 
     /**
      * Prebid AdSlot

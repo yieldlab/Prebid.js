@@ -12,6 +12,10 @@
 import * as utils from '../src/utils.js'
 import { ajax } from '../src/ajax.js';
 import { submodule } from '../src/hook.js';
+import { getStorageManager } from '../src/storageManager.js';
+
+const DT_VENDOR_ID = 64; // cmp gvlVendorId
+const storage = getStorageManager(DT_VENDOR_ID);
 
 var fallbackTimeout = 1550; // timeout value that allows userId system to execute first
 var fallbackTimer = 0; // timer Id for fallback init so we don't double call
@@ -40,7 +44,6 @@ var noop = function () {
 
 const MAX_RETRIES = 2;
 const DT_ID_SVC = 'https://prebid.digitru.st/id/v1';
-const DT_VENDOR_ID = 64; // cmp gvlVendorId
 
 var isFunc = function (fn) {
   return typeof (fn) === 'function';
@@ -88,7 +91,32 @@ function writeDigiId(id) {
   var key = 'DigiTrust.v1.identity';
   var date = new Date();
   date.setTime(date.getTime() + 604800000);
-  utils.setCookie(key, encId(id), date.toUTCString(), 'none');
+  storage.setCookie(key, encId(id), date.toUTCString(), 'none');
+}
+
+/**
+ * Tests to see if the current browser is FireFox
+ */
+function isFirefoxBrowser(ua) {
+  ua = ua || navigator.userAgent;
+  ua = ua.toLowerCase();
+  if (ua.indexOf('firefox') !== -1) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Test to see if the user has a browser that is disallowed for making AJAX
+ * requests due to the behavior not supported DigiTrust ID Cookie.
+ */
+function isDisallowedBrowserForApiCall() {
+  if (utils.isSafariBrowser()) {
+    return true;
+  } else if (isFirefoxBrowser()) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -166,6 +194,14 @@ function initDigitrustFacade(config) {
       // check gdpr vendor here. Full DigiTrust library has vendor check built in
       gdprConsent.hasConsent(null, function (hasConsent) {
         if (hasConsent) {
+          if (isDisallowedBrowserForApiCall()) {
+            let resultObj = {
+              success: false,
+              err: 'Your browser does not support DigiTrust Identity'
+            }
+            checkAndCallInitializeCb(resultObj);
+            return;
+          }
           callApi(opts);
         }
       })
