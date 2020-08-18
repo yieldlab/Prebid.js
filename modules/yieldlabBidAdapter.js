@@ -89,6 +89,8 @@ export const spec = {
         const customsize = bidRequest.params.adSize !== undefined ? parseSize(bidRequest.params.adSize) : primarysize
         const extId = bidRequest.params.extId !== undefined ? '&id=' + bidRequest.params.extId : ''
         const adType = matchedBid.adtype !== undefined ? matchedBid.adtype : ''
+        const gdpr = '&gdpr=' + (bidRequest.gdprConsent && typeof bidRequest.gdprConsent.gdprApplies === 'boolean') ?  bidRequest.gdprConsent.gdprApplies : true
+        const consent = bidRequest.gdprConsent && bidRequest.gdprConsent.consentString ? '&consent=' + bidRequest.gdprConsent.consentString : ''
 
         const bidResponse = {
           requestId: bidRequest.bidId,
@@ -101,7 +103,7 @@ export const spec = {
           netRevenue: false,
           ttl: BID_RESPONSE_TTL_SEC,
           referrer: '',
-          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}"></script>`
+          ad: `<script src="${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${gdpr}${consent}"></script>`
         }
 
         if (isVideo(bidRequest, adType)) {
