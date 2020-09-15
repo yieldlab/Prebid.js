@@ -134,6 +134,26 @@ export const spec = {
           }
         }
 
+        if (isNative(bidRequest, adType)) {
+          bidResponse.adUrl = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/${customsize[0]}x${customsize[1]}?ts=${timestamp}${extId}${gdprApplies}${gdprConsent}`
+          bidResponse.mediaType = NATIVE
+          // native mediatype has to have specific assets
+          bidResponse.native = {
+            title: 'title',
+            body: 'body',
+            image: {
+              height: 1,
+              width: 1
+            },
+            icon: {
+              height: 1,
+              width: 1
+            },
+            sponsoredBy: 'sponsoredBy',
+            clickUrl: 'clickUrl'
+          }
+        }
+
         bidResponses.push(bidResponse)
       }
     })
@@ -159,6 +179,15 @@ function isVideo (format, adtype) {
 function isOutstream (format) {
   let context = utils.deepAccess(format, 'mediaTypes.video.context')
   return (context === 'outstream')
+}
+
+/**
+ * Is this a native format?
+ * @param {Object} format
+ * @returns {Boolean}
+ */
+function isNative (format, adtype) {
+  return utils.deepAccess(format, 'mediaTypes.native') && adtype === 'NATIVE'
 }
 
 /**
