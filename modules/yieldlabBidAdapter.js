@@ -28,6 +28,7 @@ export const spec = {
    */
   buildRequests: function (validBidRequests, bidderRequest) {
     const adslotIds = []
+    const adslotSizes = [];
     const timestamp = Date.now()
     const query = {
       ts: timestamp,
@@ -35,7 +36,25 @@ export const spec = {
     }
 
     utils._each(validBidRequests, function (bid) {
-      adslotIds.push(bid.params.adslotId)
+      let adslotId = bid.params.adslotId
+      adslotIds.push(adslotId)
+
+      let sizes = new Set()
+      if (bid.mediaTypes) {
+        for (let mediaType in bid.mediaTypes) {
+          for (let mediaTypeSize of bid.mediaTypes[mediaType].sizes) {
+            let size = mediaTypeSize.join('x')
+            sizes.add(size)
+          }
+        }
+      } else {
+        for (let bidSize of bid.sizes) {
+          let size = bid.sizes[bidSize].join('x')
+          sizes.add(size)
+        }
+      }
+      adslotSizes.push(adslotId + ':' + [...sizes].join('|'))
+
       if (bid.params.targeting) {
         query.t = createTargetingString(bid.params.targeting)
       }
@@ -66,6 +85,7 @@ export const spec = {
     }
 
     const adslots = adslotIds.join(',')
+    query.sizes = adslotSizes.join(',')
     const queryString = createQueryString(query)
 
     return {
