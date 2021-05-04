@@ -42,15 +42,24 @@ export const spec = {
       let sizes = new Set()
       if (bid.mediaTypes) {
         for (let mediaType in bid.mediaTypes) {
-          for (let mediaTypeSize of bid.mediaTypes[mediaType].sizes) {
-            let size = mediaTypeSize.join('x')
-            sizes.add(size)
+          let sizeName = (mediaType == 'video') ? 'playerSize' : 'sizes'
+          if (bid.mediaTypes[mediaType][sizeName].length === 2 && !utils.isArray(bid.mediaTypes[mediaType][sizeName][0])) {
+            sizes.add(bid.mediaTypes[mediaType][sizeName][0] + 'x' + bid.mediaTypes[mediaType][sizeName][1])
+          } else {
+            for (let mediaTypeSize of bid.mediaTypes[mediaType][sizeName]) {
+              let size = mediaTypeSize.join('x')
+              sizes.add(size)
+            }
           }
         }
-      } else {
-        for (let bidSize of bid.sizes) {
-          let size = bid.sizes[bidSize].join('x')
-          sizes.add(size)
+      } else if (bid.sizes) {
+        if (bid.sizes.length === 2 && !utils.isArray(bid.sizes[0])) {
+          sizes.add(bid.sizes[0] + 'x' + bid.sizes[1])
+        } else {
+          for (let bidSize of bid.sizes) {
+            let size = bidSize.join('x')
+            sizes.add(size)
+          }
         }
       }
       adslotSizes.push(adslotId + ':' + [...sizes].join('|'))
