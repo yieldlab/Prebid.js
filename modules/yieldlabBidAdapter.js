@@ -62,8 +62,10 @@ export const spec = {
           }
         }
       }
-      adslotSizes.push(adslotId + ':' + [...sizes].join('|'))
-
+      if (sizes.size > 0) {
+        adslotSizes.push(adslotId + ':' + [...sizes].join('|'))
+      }
+      
       if (bid.params.targeting) {
         query.t = createTargetingString(bid.params.targeting)
       }
@@ -94,7 +96,7 @@ export const spec = {
     }
 
     const adslots = adslotIds.join(',')
-    query.sizes = adslotSizes.join(',')
+    if (adslotSizes.length > 0) { query.sizes = adslotSizes.join(',') }
     const queryString = createQueryString(query)
 
     return {
