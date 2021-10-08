@@ -1,7 +1,7 @@
 import * as utils from '../src/utils.js'
 import { registerBidder } from '../src/adapters/bidderFactory.js'
 import find from 'core-js-pure/features/array/find.js'
-import { VIDEO, BANNER } from '../src/mediaTypes.js'
+import { VIDEO, BANNER, NATIVE } from '../src/mediaTypes.js'
 import { Renderer } from '../src/Renderer.js'
 
 const ENDPOINT = 'https://ad.yieldlab.net'
@@ -14,7 +14,7 @@ const GVLID = 70
 export const spec = {
   code: BIDDER_CODE,
   gvlid: GVLID,
-  supportedMediaTypes: [VIDEO, BANNER],
+  supportedMediaTypes: [VIDEO, BANNER, NATIVE],
 
   isBidRequestValid: function (bid) {
     if (bid && bid.params && bid.params.adslotId && bid.params.supplyId) {
@@ -142,6 +142,13 @@ export const spec = {
           }
         }
 
+        if (isNative(bidRequest, adType)) {
+          const url = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/?ts=${timestamp}${extId}${gdprApplies}${gdprConsent}${pvId}`
+          bidResponse.adUrl = url
+          bidResponse.mediaType = NATIVE
+          bidResponse.native = matchedBid.native
+        }
+
         bidResponses.push(bidResponse)
       }
     })
@@ -157,6 +164,16 @@ export const spec = {
  */
 function isVideo (format, adtype) {
   return utils.deepAccess(format, 'mediaTypes.video') && adtype.toLowerCase() === 'video'
+}
+
+/**
+ * Is this a native format?
+ * @param {Object} format
+ * @param {String} adtype
+ * @returns {Boolean}
+ */
+function isNative(format, adtype) {
+  return utils.deepAccess(format, 'mediaTypes.native') && adtype === 'NATIVE'
 }
 
 /**

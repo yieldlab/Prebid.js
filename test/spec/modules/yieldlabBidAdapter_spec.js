@@ -57,6 +57,12 @@ const VIDEO_REQUEST = Object.assign({}, REQUEST, {
   }
 })
 
+const NATIVE_REQUEST = Object.assign({}, REQUEST, {
+  'mediaTypes': {
+    'native': { }
+  }
+})
+
 const RESPONSE = {
   advertiser: 'yieldlab',
   curl: 'https://www.yieldlab.de',
@@ -67,6 +73,36 @@ const RESPONSE = {
   adsize: '728x90',
   adtype: 'BANNER'
 }
+
+const NATIVE_RESPONSE = Object.assign({}, RESPONSE, {
+  'adtype': 'NATIVE',
+  'native': {
+    'link': {
+      'url': 'https://www.yieldlab.de'
+    },
+    'assets': [
+      {
+        'id': 1,
+        'title': {
+          'text': 'This is a great headline'
+        }
+      },
+      {
+        'id': 2,
+        'img': {
+          'url': 'https://localhost:8080/yl-logo100x100.jpg',
+          'w': 100,
+          'h': 100
+        }
+      }
+    ],
+    'imptrackers': [
+      'http://localhost:8080/ve?d=ODE9ZSY2MTI1MjAzNjMzMzYxPXN0JjA0NWUwZDk0NTY5Yi05M2FiLWUwZTQtOWFjNy1hYWY0MzFiZj1kaXQmMj12',
+      'http://localhost:8080/md/1111/9efa4e76-2030-4f04-bb9f-322541f8d611?mdata=false&pvid=false&ids=x:1',
+      'http://localhost:8080/imp?s=13216&d=2171514&a=12548955&ts=1633363025216&tid=fb134faa-7ca9-4e0e-ba39-b96549d0e540&l=0'
+    ]
+  }
+})
 
 const VIDEO_RESPONSE = Object.assign({}, RESPONSE, {
   'adtype': 'VIDEO'
@@ -236,6 +272,18 @@ describe('yieldlabBidAdapter', function () {
       expect(result[0].mediaType).to.equal('video')
       expect(result[0].vastUrl).to.include('https://ad.yieldlab.net/d/1111/2222/?ts=')
       expect(result[0].vastUrl).to.include('&id=abc')
+    })
+
+    it('should add vastUrl when type is Native', function () {
+      const result = spec.interpretResponse({body: [NATIVE_RESPONSE]}, {validBidRequests: [NATIVE_REQUEST], queryParams: REQPARAMS})
+
+      expect(result[0].requestId).to.equal('2d925f27f5079f')
+      expect(result[0].cpm).to.equal(0.01)
+      expect(result[0].mediaType).to.equal('native')
+      expect(result[0].adUrl).to.include('https://ad.yieldlab.net/d/1111/2222/?ts=')
+      expect(result[0].native.link.url).to.equal('https://www.yieldlab.de')
+      expect(result[0].native.assets.length).to.equal(2)
+      expect(result[0].native.imptrackers.length).to.equal(3)
     })
 
     it('should append gdpr parameters to vastUrl', function () {
