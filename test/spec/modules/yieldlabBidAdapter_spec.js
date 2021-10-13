@@ -274,7 +274,7 @@ describe('yieldlabBidAdapter', function () {
       expect(result[0].vastUrl).to.include('&id=abc')
     })
 
-    it('should add vastUrl when type is Native', function () {
+    it('should add adUrl when type is Native', function () {
       const result = spec.interpretResponse({body: [NATIVE_RESPONSE]}, {validBidRequests: [NATIVE_REQUEST], queryParams: REQPARAMS})
 
       expect(result[0].requestId).to.equal('2d925f27f5079f')
