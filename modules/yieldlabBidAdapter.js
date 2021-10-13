@@ -146,7 +146,18 @@ export const spec = {
           const url = `${ENDPOINT}/d/${matchedBid.id}/${bidRequest.params.supplyId}/?ts=${timestamp}${extId}${gdprApplies}${gdprConsent}${pvId}`
           bidResponse.adUrl = url
           bidResponse.mediaType = NATIVE
-          bidResponse.native = matchedBid.native
+          const nativeImageAsset = matchedBid.native.assets.find(e => e.id === 2) ? matchedBid.native.assets.find(e => e.id === 2).img : {url: '', w: 0, h: 0};
+          bidResponse.native = {
+            title: matchedBid.native.assets.find(e => e.id === 1) ? matchedBid.native.assets.find(e => e.id === 1).title.text : '',
+            body: matchedBid.native.assets.find(e => e.id === 3) ? matchedBid.native.assets.find(e => e.id === 3).data.value : '',
+            image: {
+              url: nativeImageAsset.url,
+              width: nativeImageAsset.w,
+              height: nativeImageAsset.h,
+            },
+            clickUrl: matchedBid.native.link.url,
+            impressionTrackers: matchedBid.native.imptrackers,
+          };
         }
 
         bidResponses.push(bidResponse)
