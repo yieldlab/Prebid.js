@@ -31,6 +31,7 @@ export const spec = {
    */
   buildRequests: function (validBidRequests, bidderRequest) {
     const adslotIds = []
+    const adslotSizes = []
     const timestamp = Date.now()
     const query = {
       ts: timestamp,
@@ -38,7 +39,36 @@ export const spec = {
     }
 
     _each(validBidRequests, function (bid) {
-      adslotIds.push(bid.params.adslotId)
+      let adslotId = bid.params.adslotId
+      adslotIds.push(adslotId)
+
+      let sizes = new Set()
+      if (bid.mediaTypes) {
+        for (let mediaType in bid.mediaTypes) {
+          let sizeName = (mediaType == 'video') ? 'playerSize' : 'sizes'
+          if (bid.mediaTypes[mediaType][sizeName].length === 2 && !isArray(bid.mediaTypes[mediaType][sizeName][0])) {
+            sizes.add(bid.mediaTypes[mediaType][sizeName][0] + 'x' + bid.mediaTypes[mediaType][sizeName][1])
+          } else {
+            for (let mediaTypeSize of bid.mediaTypes[mediaType][sizeName]) {
+              let size = mediaTypeSize.join('x')
+              sizes.add(size)
+            }
+          }
+        }
+      } else if (bid.sizes) {
+        if (bid.sizes.length === 2 && !isArray(bid.sizes[0])) {
+          sizes.add(bid.sizes[0] + 'x' + bid.sizes[1])
+        } else {
+          for (let bidSize of bid.sizes) {
+            let size = bidSize.join('x')
+            sizes.add(size)
+          }
+        }
+      }
+      if (sizes.size > 0) {
+        adslotSizes.push(adslotId + ':' + [...sizes].join('|'))
+      }
+
       if (bid.params.targeting) {
         query.t = createTargetingString(bid.params.targeting)
       }
@@ -74,6 +104,7 @@ export const spec = {
     }
 
     const adslots = adslotIds.join(',')
+    if (adslotSizes.length > 0) { query.sizes = adslotSizes.join(',') }
     const queryString = createQueryString(query)
 
     return {
