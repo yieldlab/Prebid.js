@@ -68,6 +68,7 @@ const REQUEST = {
 const VIDEO_REQUEST = Object.assign({}, REQUEST, {
   'mediaTypes': {
     'video': {
+      'playerSize': [[640, 480]],
       'context': 'instream'
     }
   }
@@ -205,6 +206,10 @@ describe('yieldlabBidAdapter', function () {
       expect(request.url).to.include('iab_content=id%3Afoo_id%2Cepisode%3A99%2Ctitle%3Afoo_title%252Cbar_title%2Cseries%3Afoo_series%2Cseason%3As1%2Cartist%3Afoo%2520bar%2Cgenre%3Abaz%2Cisrc%3ACC-XXX-YY-NNNNN%2Curl%3Ahttp%253A%252F%252Ffoo_url.de%2Ccat%3Acat1%7Ccat2%252Cppp%7Ccat3%257C%257C%257C%252F%252F%2Ccontext%3A7%2Ckeywords%3Ak1%252C%7Ck2..%2Clive%3A0')
     })
 
+    it('passes correct size to bid request', function () {
+      expect(request.url).to.include('728x90')
+    })
+
     const siteConfig = {
       'ortb2': {
         'site': {
@@ -265,6 +270,11 @@ describe('yieldlabBidAdapter', function () {
     it('passes gdpr flag and consent if present', function () {
       expect(gdprRequest.url).to.include('consent=BN5lERiOMYEdiAKAWXEND1AAAAE6DABACMA')
       expect(gdprRequest.url).to.include('gdpr=true')
+    })
+
+    it('passes correct size to bid request for mediaType video with playerSize attribute', function () {
+      const request = spec.buildRequests([VIDEO_REQUEST], REQPARAMS)
+      expect(request.url).to.include('640x480')
     })
   })
 

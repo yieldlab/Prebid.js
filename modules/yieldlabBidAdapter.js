@@ -11,6 +11,7 @@ const BID_RESPONSE_TTL_SEC = 300
 const CURRENCY_CODE = 'EUR'
 const OUTSTREAMPLAYER_URL = 'https://ad.adition.com/dynamic.ad?a=o193092&ma_loadEvent=ma-start-event'
 const GVLID = 70
+const DIMENSION_SIGN = 'x'
 
 export const spec = {
   code: BIDDER_CODE,
@@ -31,6 +32,7 @@ export const spec = {
    */
   buildRequests: function (validBidRequests, bidderRequest) {
     const adslotIds = []
+    const adslotSizes = [];
     const timestamp = Date.now()
     const query = {
       ts: timestamp,
@@ -39,6 +41,10 @@ export const spec = {
 
     _each(validBidRequests, function (bid) {
       adslotIds.push(bid.params.adslotId)
+      const sizes = extractSizes(bid)
+      if (sizes.size > 0) {
+        adslotSizes.push(bid.params.adslotId + ':' + [...sizes].join('|'))
+      }
       if (bid.params.targeting) {
         query.t = createTargetingString(bid.params.targeting)
       }
@@ -74,6 +80,9 @@ export const spec = {
     }
 
     const adslots = adslotIds.join(',')
+    if (adslotSizes.length > 0) {
+      query.sizes = adslotSizes.join(',')
+    }
     const queryString = createQueryString(query)
 
     return {
@@ -254,7 +263,7 @@ function getPlayerSize(format) {
  * @returns {Array}
  */
 function parseSize(size) {
-  return size.split('x').map(Number)
+  return size.split(DIMENSION_SIGN).map(Number)
 }
 
 /**
@@ -381,6 +390,34 @@ function outstreamRender(bid) {
     window.ma_container = bid.adUnitCode
     window.document.dispatchEvent(new Event('ma-start-event'))
   });
+}
+/**
+ * Extract sizes from given bid for bid.mediaTypes or bid.sizes
+ * @param {Object} bid
+ */
+function extractSizes(bid) {
+  let sizes = new Set()
+  if (bid.mediaTypes) {
+    for (let mediaType in bid.mediaTypes) {
+      let sizeName = (mediaType === VIDEO) ? 'playerSize' : 'sizes'
+      if (bid.mediaTypes[mediaType][sizeName].length === 2 && !isArray(bid.mediaTypes[mediaType][sizeName][0])) {
+        sizes.add(bid.mediaTypes[mediaType][sizeName][0] + DIMENSION_SIGN + bid.mediaTypes[mediaType][sizeName][1])
+      } else {
+        for (let mediaTypeSize of bid.mediaTypes[mediaType][sizeName]) {
+          sizes.add(mediaTypeSize.join(DIMENSION_SIGN))
+        }
+      }
+    }
+  } else if (bid.sizes) {
+    if (bid.sizes.length === 2 && !isArray(bid.sizes[0])) {
+      sizes.add(bid.sizes[0] + DIMENSION_SIGN + bid.sizes[1])
+    } else {
+      for (let bidSize of bid.sizes) {
+        sizes.add(bidSize.join(DIMENSION_SIGN))
+      }
+    }
+  }
+  return sizes
 }
 
 registerBidder(spec)
