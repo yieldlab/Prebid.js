@@ -262,7 +262,7 @@ describe('yieldlabBidAdapter', () => {
       let request;
 
       before(() => {
-        request = spec.buildRequests(bidRequests);
+        request = spec.buildRequests(bidRequests)[0];
       });
 
       it('sends bid request to ENDPOINT via GET', () => {
@@ -326,7 +326,7 @@ describe('yieldlabBidAdapter', () => {
       });
 
       it('generates iab_content string from bidder params', () => {
-        const request = spec.buildRequests(bidRequests);
+        const request = spec.buildRequests(bidRequests)[0];
         expect(request.url).to.include('iab_content=id%3Afoo_id%2Cepisode%3A99%2Ctitle%3Afoo_title%252Cbar_title%2Cseries%3Afoo_series%2Cseason%3As1%2Cartist%3Afoo%2520bar%2Cgenre%3Abaz%2Cisrc%3ACC-XXX-YY-NNNNN%2Curl%3Ahttp%253A%252F%252Ffoo_url.de%2Ccat%3Acat1%7Ccat2%252Cppp%7Ccat3%257C%257C%257C%252F%252F%2Ccontext%3A7%2Ckeywords%3Ak1%252C%7Ck2..%2Clive%3A0');
       });
 
@@ -334,7 +334,7 @@ describe('yieldlabBidAdapter', () => {
         const requestWithoutIabContent = DEFAULT_REQUEST();
         delete requestWithoutIabContent.params.iabContent;
 
-        const request = spec.buildRequests([{...requestWithoutIabContent, ...siteConfig}]);
+        const request = spec.buildRequests([{...requestWithoutIabContent, ...siteConfig}])[0];
         expect(request.url).to.include('iab_content=id%3Aid_from_config');
       });
 
@@ -384,7 +384,7 @@ describe('yieldlabBidAdapter', () => {
           'channel.name:foo,' +
           'channel.domain:channel.test'
         );
-        const request = spec.buildRequests([IAB_REQUEST()], REQPARAMS);
+        const request = spec.buildRequests([IAB_REQUEST()], REQPARAMS)[0];
         expect(request.url).to.include('iab_content=' + expectedIabContentValue);
       });
     });
@@ -392,7 +392,7 @@ describe('yieldlabBidAdapter', () => {
     it('passes unencoded schain string to bid request when complete == 0', () => {
       const schainRequest = DEFAULT_REQUEST();
       schainRequest.schain.complete = 0; //
-      const request = spec.buildRequests([schainRequest]);
+      const request = spec.buildRequests([schainRequest])[0];
       expect(request.url).to.include('schain=1.0,0!indirectseller.com,1,1,,,,!indirectseller2.com,2,1,,indirectseller2%20name%20with%20comma%20%2C%20and%20bang%20%21,,');
     });
 
@@ -405,7 +405,7 @@ describe('yieldlabBidAdapter', () => {
           page: 'https://www.yieldlab.de/test?with=querystring',
           stack: ['https://www.yieldlab.de/test?with=querystring'],
         },
-      });
+      })[0];
 
       expect(refererRequest.url).to.include('pubref=https%3A%2F%2Fwww.yieldlab.de%2Ftest%3Fwith%3Dquerystring');
     });
@@ -416,7 +416,7 @@ describe('yieldlabBidAdapter', () => {
           consentString: 'BN5lERiOMYEdiAKAWXEND1AAAAE6DABACMA',
           gdprApplies: true,
         },
-      });
+      })[0];
 
       expect(gdprRequest.url).to.include('consent=BN5lERiOMYEdiAKAWXEND1AAAAE6DABACMA');
       expect(gdprRequest.url).to.include('gdpr=true');
@@ -432,16 +432,16 @@ describe('yieldlabBidAdapter', () => {
         };
 
         // when mediaTypes is present it has precedence over the sizes field (728, 90)
-        let request = spec.buildRequests([bannerRequest], REQPARAMS);
+        let request = spec.buildRequests([bannerRequest], REQPARAMS)[0];
         expect(request.url).to.include('sizes');
         expect(request.url).to.include('123x456');
 
         bannerRequest.mediaTypes.banner.sizes = [123, 456];
-        request = spec.buildRequests([bannerRequest], REQPARAMS);
+        request = spec.buildRequests([bannerRequest], REQPARAMS)[0];
         expect(request.url).to.include('123x456');
 
         bannerRequest.mediaTypes.banner.sizes = [[123, 456], [320, 240]];
-        request = spec.buildRequests([bannerRequest], REQPARAMS);
+        request = spec.buildRequests([bannerRequest], REQPARAMS)[0];
         expect(request.url).to.include('123x456');
         expect(request.url).to.include('320x240');
       });
@@ -450,30 +450,30 @@ describe('yieldlabBidAdapter', () => {
         // information is taken from the top level sizes field
         const sizesRequest = DEFAULT_REQUEST();
 
-        let request = spec.buildRequests([sizesRequest], REQPARAMS);
+        let request = spec.buildRequests([sizesRequest], REQPARAMS)[0];
         expect(request.url).to.include('sizes');
         expect(request.url).to.include('728x90');
 
         sizesRequest.sizes = [[728, 90]];
-        request = spec.buildRequests([sizesRequest], REQPARAMS);
+        request = spec.buildRequests([sizesRequest], REQPARAMS)[0];
         expect(request.url).to.include('728x90');
 
         sizesRequest.sizes = [[728, 90], [320, 240]];
-        request = spec.buildRequests([sizesRequest], REQPARAMS);
+        request = spec.buildRequests([sizesRequest], REQPARAMS)[0];
         expect(request.url).to.include('728x90');
       });
 
       it('does not pass the sizes parameter for mediaType video', () => {
         const videoRequest = VIDEO_REQUEST();
 
-        let request = spec.buildRequests([videoRequest], REQPARAMS);
+        let request = spec.buildRequests([videoRequest], REQPARAMS)[0];
         expect(request.url).to.not.include('sizes');
       });
 
       it('does not pass the sizes parameter for mediaType native', () => {
         const nativeRequest = NATIVE_REQUEST();
 
-        let request = spec.buildRequests([nativeRequest], REQPARAMS);
+        let request = spec.buildRequests([nativeRequest], REQPARAMS)[0];
         expect(request.url).to.not.include('sizes');
       });
     });
@@ -702,7 +702,7 @@ describe('yieldlabBidAdapter', () => {
           };
         },
       });
-      const result = spec.buildRequests([bidRequest, bidRequest2], REQPARAMS);
+      const result = spec.buildRequests([bidRequest, bidRequest2], REQPARAMS)[0];
       expect(result).to.have.nested.property('queryParams.floor', '1111:133,2222:299');
     });
 
@@ -710,7 +710,7 @@ describe('yieldlabBidAdapter', () => {
       currency = 'EUR';
       floor = 0.745;
       bidRequest = Object.assign(DEFAULT_REQUEST(), {getFloor});
-      const result = spec.buildRequests([bidRequest], REQPARAMS);
+      const result = spec.buildRequests([bidRequest], REQPARAMS)[0];
       expect(result).to.have.nested.property('queryParams.floor', '1111:75');
     });
 
@@ -718,7 +718,7 @@ describe('yieldlabBidAdapter', () => {
       currency = 'EUR';
       floor = 0.034;
       bidRequest = Object.assign(DEFAULT_REQUEST(), {getFloor});
-      const result = spec.buildRequests([bidRequest], REQPARAMS);
+      const result = spec.buildRequests([bidRequest], REQPARAMS)[0];
       expect(result).to.have.nested.property('queryParams.floor', '1111:3');
     });
 
@@ -727,7 +727,7 @@ describe('yieldlabBidAdapter', () => {
         getFloor: () => {
           return {};
         }});
-      const result = spec.buildRequests([bidRequest], REQPARAMS);
+      const result = spec.buildRequests([bidRequest], REQPARAMS)[0];
       expect(result).not.to.have.nested.property('queryParams.floor');
     });
 
@@ -735,7 +735,7 @@ describe('yieldlabBidAdapter', () => {
       currency = 'USD';
       floor = 1.33;
       bidRequest = Object.assign(DEFAULT_REQUEST(), {getFloor});
-      const result = spec.buildRequests([bidRequest], REQPARAMS);
+      const result = spec.buildRequests([bidRequest], REQPARAMS)[0];
       expect(result).not.to.have.nested.property('queryParams.floor');
     });
   });

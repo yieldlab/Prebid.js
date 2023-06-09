@@ -106,14 +106,23 @@ export const spec = {
       query.floor = adslotFloors.join(',');
     }
 
-    const queryString = createQueryString(query);
-
-    return {
-      method: 'GET',
-      url: `${ENDPOINT}/yp/${adslots}?${queryString}`,
-      validBidRequests: validBidRequests,
-      queryParams: query,
-    };
+    const ypRequests = [];
+    const queryIds = query.ids.split(',');
+    const ylIds = queryIds.filter(e => e.indexOf('ylid') == 0);
+    if (ylIds && ylIds.length > 1) {
+      const nonYlIds = queryIds.filter(e => e.indexOf('ylid') == -1);
+      const queryAtypes = query.atypes.split(',');
+      const ylAtypes = queryAtypes.filter(e => e.indexOf('ylid') == 0);
+      const nonYlAtypes = queryAtypes.filter(e => e.indexOf('ylid') == -1);
+      for (const ylId of ylIds) {
+        query.ids = nonYlIds.concat([ylId]);
+        query.atypes = nonYlAtypes.concat([ylAtypes[ylIds.indexOf(ylId)]]);
+        ypRequests.push(buildYpRequest(adslots, query, validBidRequests));
+      }
+    } else {
+      ypRequests.push(buildYpRequest(adslots, query, validBidRequests));
+    }
+    return ypRequests;
   },
 
   /**
@@ -241,6 +250,24 @@ export const spec = {
     return syncs;
   },
 };
+
+/**
+ * Builds a Yieldprobe request
+ * @param {Array} adslots
+ * @param {Object} query
+ * @param {BidRequest[]} validBidRequests
+ * @returns {Object}
+ */
+function buildYpRequest(adslots, query, validBidRequests) {
+    const queryString = createQueryString(query);
+    const ypRequest = {
+      method: 'GET',
+      url: `${ENDPOINT}/yp/${adslots}?${queryString}`,
+      validBidRequests: validBidRequests,
+      queryParams: query,
+    };
+    return ypRequest;
+  }
 
 /**
  * Is this a video format?

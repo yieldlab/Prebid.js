@@ -224,6 +224,12 @@ export const USER_IDS_CONFIG = {
     atype: 1
   },
 
+  // YieldlabId
+  'ylid': {
+    source: 'ylid',
+    atype: 1
+  },
+
   // zeotapIdPlus
   'IDP': {
     source: 'zeotap.com',
