@@ -95,7 +95,6 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       expect(req.method).to.equal('POST');
       expect(req.url).to.match(/\/ortb$/);
-      expect(req.options).to.have.property('withCredentials', true);
       expect(req.options).to.have.nested.property('contentType', 'application/json');
       expect(req.options).to.have.nested.property('customHeaders.x-openrtb-version', '2.6');
 
@@ -116,12 +115,6 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       const imp = ortb.imp[0];
       expect(imp.id).to.equal(bid.bidId);
       expect(imp.tagid).to.equal('1111');
-      expect(imp).to.have.nested.property('ext.prebid.bidder.yieldlab');
-      expect(imp.ext.prebid.bidder.yieldlab).to.deep.include({
-        adslotId: '1111', supplyId: '2222', extId: 'abc'
-      });
-      expect(imp.ext.prebid.bidder.yieldlab).to.have.property('targeting');
-      expect(imp.ext.prebid.bidder.yieldlab).to.have.property('customParams');
 
       // ext.vm (pass-through + additions)
       expect(ortb).to.have.nested.property('ext.vm');
@@ -129,16 +122,12 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(ortb.ext.vm.gp).to.equal(true);
       expect(ortb.ext.vm.foo).to.equal('bar');
       // additions by adapter
-      expect(ortb.ext.vm.windowid).to.equal('auction-123');
       expect(ortb.ext.vm.externalid).to.equal('abc');
-
-      // targeting encoded
-      const expectedRaw = 'key1=value1&key2=value2&notDoubleEncoded=value3,value4';
-      expect(ortb.ext.vm.targeting).to.equal(encodeURIComponent(expectedRaw));
+      expect(ortb.ext.vm.targeting).to.equal('key1=value1&key2=value2&notDoubleEncoded=value3,value4');
 
       // user.eids & source.schain (mapped by converter)
       expect(ortb).to.have.nested.property('user.eids').that.is.an('array').with.length(2);
-      expect(ortb).to.have.nested.property('source.schain.ver', '1.0');
+      expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
     });
 
     describe('applyIabContent', () => {
@@ -194,7 +183,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
     });
 
     describe('applyVmExt', () => {
-      it('preserves unrelated FPD fields but overwrites windowid, externalid, targeting', () => {
+      it('preserves unrelated FPD fields but overwrites externalid, targeting', () => {
         const bid = DEFAULT_REQUEST(); // extId = 'abc'
         // add some targeting to ensure encoding happens
         bid.params.targeting = { a: '1', b: '2' };
@@ -208,7 +197,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
               vm: {
                 gp: true,
                 foo: 'bar',
-                windowid: 'old-window',
+                windowid: 'window-id',
                 externalid: 'old-ext',
                 targeting: 'old-target'
               }
@@ -221,11 +210,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         expect(ortb).to.have.nested.property('ext.vm.gp', true);
         expect(ortb).to.have.nested.property('ext.vm.foo', 'bar');
+        expect(ortb.ext.vm.windowid).to.equal('window-id');
 
         // overwritten by adapter
-        expect(ortb.ext.vm.windowid).to.equal('auc-vm-1');
         expect(ortb.ext.vm.externalid).to.equal('abc');
-        expect(ortb.ext.vm.targeting).to.equal(encodeURIComponent('a=1&b=2'));
+        expect(ortb.ext.vm.targeting).to.equal('a=1&b=2');
       });
     });
   });

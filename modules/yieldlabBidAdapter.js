@@ -23,6 +23,7 @@ const OUTSTREAMPLAYER_URL = 'https://ad.adition.com/dynamic.ad?a=o193092&ma_load
 const GVLID = 70;
 const IMG_TYPE_ICON = 1;
 const IMG_TYPE_MAIN = 3;
+const DIMENSION_SIGN = 'x';
 
 const MTYPE = {
   BANNER: 1,
@@ -52,6 +53,83 @@ export const spec = {
    * @returns {ServerRequest|ServerRequest[]}
    */
   buildRequests(validBidRequests, bidderRequest) {
+    const requestFn = (buildRequest, imps, bidderReq, ctx) => {
+      const ortb = buildRequest(imps, bidderReq, ctx);
+
+      ortb.tmax = (bidderReq?.timeout != null) ? bidderReq.timeout : ortb.tmax;
+
+      if (bidderReq?.auctionId) {
+        ortb.id = bidderReq.auctionId;
+      }
+
+      if (!ortb.cur || !ortb.cur.length) {
+        ortb.cur = [CURRENCY_CODE];
+      }
+
+      const page = bidderReq?.refererInfo?.page;
+      if (page) {
+        ortb.site = ortb.site || {};
+        if (!ortb.site.page) ortb.site.page = page;
+      }
+
+      const ref = bidderReq?.refererInfo?.ref;
+      if (ref) {
+        ortb.site = ortb.site || {};
+        if (!ortb.site.ref) ortb.site.ref = ref;
+      }
+
+      // GDPR (map to 2.6 + 2.5 fallback)
+      applyConsent(ortb, bidderReq);
+
+      applyEids(ortb, validBidRequests);
+
+      applySchain(ortb, validBidRequests);
+
+      applyImps(ortb, validBidRequests);
+
+      applyBidFloors(ortb, validBidRequests);
+
+      applyIabContent(ortb, validBidRequests);
+
+      applyVmExt(ortb, validBidRequests, bidderReq);
+
+      return ortb;
+    };
+
+    const bidResponseFn = (buildBidResponse, bid, ctx) => {
+      // mtype hint if missing
+      if (bid.mtype == null) {
+        if (deepAccess(ctx, 'bidRequest.mediaTypes.banner')) {
+          bid.mtype = MTYPE.BANNER;
+        } else if (deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
+          bid.mtype = MTYPE.VIDEO;
+        } else if (deepAccess(ctx, 'bidRequest.mediaTypes.native')) {
+          bid.mtype = MTYPE.NATIVE;
+        }
+      }
+
+      const resp = buildBidResponse(bid, ctx);
+
+      ensureCreativeId(resp, bid, ctx);
+      ensureVideoAsset(resp, bid, ctx);
+      ensureBannerSize(resp, ctx);
+
+      if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
+        setVideoSize(resp, ctx);
+        installOutstreamRendererIfNeeded(resp, ctx);
+      }
+
+      attachNativeFromAdm(resp, bid);
+
+      if (resp.mediaType === NATIVE && resp.native) {
+        enrichNativeFromAssets(resp.native);
+      }
+
+      ensureMeta(resp, bid);
+
+      return resp;
+    };
+
     const converter = ortbConverter({
       context: {
         currency: CURRENCY_CODE,
@@ -59,117 +137,8 @@ export const spec = {
         ttl: BID_RESPONSE_TTL_SEC,
         nativeRequest: { eventtrackers: [{ event: 1, methods: [1, 2] }] }
       },
-
-      request(buildRequest, imps, bidderReq, ctx) {
-        const ortb = buildRequest(imps, bidderReq, ctx);
-
-        // Request id, timeout and currency
-        if (bidderReq?.auctionId) {
-          ortb.id = bidderReq.auctionId;
-        }
-        ortb.tmax = (bidderReq?.timeout != null) ? bidderReq.timeout : ortb.tmax;
-        if (!ortb.cur || !ortb.cur.length) {
-          ortb.cur = [CURRENCY_CODE];
-        }
-
-        // Site fields
-        const page = bidderReq?.refererInfo?.page;
-        const ref = bidderReq?.refererInfo?.ref;
-        if (page) {
-          ortb.site = ortb.site || {};
-          if (!ortb.site.page) {
-            ortb.site.page = page;
-          }
-        }
-        if (ref) {
-          ortb.site = ortb.site || {};
-          if (!ortb.site.ref) {
-            ortb.site.ref = ref;
-          }
-        }
-
-        // user.eids
-        const eids = validBidRequests.flatMap(b => b.userIdAsEids || []);
-        if (eids.length) {
-          ortb.user = ortb.user || {};
-          ortb.user.eids = eids;
-        }
-
-        // source.schain
-        const schain = bidderReq?.schain || validBidRequests.find(b => b.schain)?.schain;
-        if (schain) {
-          ortb.source = ortb.source || {};
-          ortb.source.schain = schain;
-        }
-
-        // Map our bidder params into each imp + tagid
-        const byId = Object.fromEntries(validBidRequests.map(b => [b.bidId, b]));
-        (ortb.imp || []).forEach((imp) => {
-          /** @type {BidRequest} */
-          const br = byId[imp.id];
-          if (!br) {
-            return;
-          }
-          if (br.params.adslotId != null) {
-            imp.tagid = br.params.adslotId;
-          }
-          imp.ext = imp.ext || {};
-          imp.ext.prebid = imp.ext.prebid || {};
-          imp.ext.prebid.bidder = imp.ext.prebid.bidder || {};
-          imp.ext.prebid.bidder[BIDDER_CODE] = {
-            adslotId: br.params.adslotId,
-            supplyId: br.params.supplyId,
-            extId: br.params.extId,
-            targeting: br.params.targeting,
-            customParams: br.params.customParams
-          };
-        });
-
-        applyIabContent(ortb, validBidRequests);
-
-        applyVmExt(ortb, validBidRequests, bidderReq);
-
-        return ortb;
-      },
-
-      /**
-       * Map an ORTB bid to a Prebid BidResponse and enrich.
-       */
-      bidResponse(buildBidResponse, bid, ctx) {
-        // mtype hint if missing
-        if (bid.mtype == null) {
-          if (deepAccess(ctx, 'bidRequest.mediaTypes.banner')) {
-            bid.mtype = MTYPE.BANNER;
-          } else if (deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
-            bid.mtype = MTYPE.VIDEO;
-          } else if (deepAccess(ctx, 'bidRequest.mediaTypes.native')) {
-            bid.mtype = MTYPE.NATIVE;
-          }
-        }
-
-        const resp = buildBidResponse(bid, ctx);
-
-        ensureCreativeId(resp, bid, ctx);
-
-        ensureVideoAsset(resp, bid, ctx);
-
-        ensureBannerSize(resp, ctx);
-
-        if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
-          setVideoSize(resp, ctx);
-          installOutstreamRendererIfNeeded(resp, ctx);
-        }
-
-        attachNativeFromAdm(resp, bid);
-
-        if (resp.mediaType === NATIVE && resp.native) {
-          enrichNativeFromAssets(resp.native);
-        }
-
-        ensureMeta(resp, bid);
-
-        return resp;
-      }
+      request: requestFn,
+      bidResponse: bidResponseFn
     });
 
     const ortbRequest = converter.toORTB({ bidderRequest, bidRequests: validBidRequests });
@@ -208,19 +177,6 @@ export const spec = {
     const { bids } = originalRequest.converter.fromORTB({
       request: originalRequest.ortbRequest,
       response: body
-    });
-
-    bids.forEach((b) => {
-      // meta fallback + DSA pass-through
-      b.meta = b.meta || {};
-      if (!b.meta.advertiserDomains?.length) {
-        const adomain = body?.seatbid?.[0]?.bid?.[0]?.adomain || [];
-        b.meta.advertiserDomains = adomain.length ? adomain : ['n/a'];
-      }
-      const dsa = deepAccess(body, 'seatbid.0.bid.0.ext.dsa');
-      if (dsa) {
-        b.meta.dsa = dsa;
-      }
     });
 
     return bids;
@@ -471,42 +427,6 @@ function unwrapNativeAdm(body) {
 }
 
 /**
- * Attach Virtual Minds (vm) extension to request.ext.vm.
- * Merge order:
- *   1) Page-level FPD (bidderRequest.ortb2.ext.vm) is copied as-is.
- *   2) Adapter-derived fields overwrite (windowid, externalid, targeting).
- *
- * @param {Object} ortb - OpenRTB request to mutate
- * @param {Array} validBidRequests - Per-adunit bid requests
- * @param {Object} bidderReq - Prebid bidderRequest (ortb2, refererInfo, auctionId, etc.)
- */
-function applyVmExt(ortb, validBidRequests, bidderReq) {
-  const firstExtId = validBidRequests.map(b => b.params?.extId).find(Boolean);
-
-  const targetingObj = mergeKeyValues(validBidRequests);
-  const targetingRaw = kvToQueryString(targetingObj);
-  const targetingStr = targetingRaw ? encodeURIComponent(targetingRaw) : '';
-
-  ortb.ext = ortb.ext || {};
-  ortb.ext.vm = ortb.ext.vm || {};
-
-  const vmExt = deepAccess(bidderReq, 'ortb2.ext.vm');
-  if (vmExt && typeof vmExt === 'object') {
-    Object.assign(ortb.ext.vm, vmExt);
-  }
-
-  if (bidderReq?.auctionId) {
-    ortb.ext.vm.windowid = bidderReq.auctionId;
-  }
-  if (firstExtId) {
-    ortb.ext.vm.externalid = firstExtId;
-  }
-  if (targetingStr) {
-    ortb.ext.vm.targeting = targetingStr;
-  }
-}
-
-/**
  * Populate "resp.native" from an ORTB Native "adm" JSON string when the converter
  * didn’t already build a Prebid Native object.
  *
@@ -526,12 +446,16 @@ function applyVmExt(ortb, validBidRequests, bidderReq) {
  * @param {Object} bid  - Raw ORTB bid (seatbid.bid[i])
  */
 function attachNativeFromAdm(resp, bid) {
-  if (resp.mediaType !== NATIVE || resp.native || typeof bid.adm !== 'string') return;
+  if (resp.mediaType !== NATIVE || resp.native || typeof bid.adm !== 'string') {
+    return;
+  }
 
   try {
     const parsed = JSON.parse(bid.adm);
     const n = (parsed && typeof parsed === 'object' && parsed.native) ? parsed.native : parsed;
-    if (!n || typeof n !== 'object') return;
+    if (!n || typeof n !== 'object') {
+      return;
+    }
 
     const assets = Array.isArray(n.assets) ? n.assets : [];
     const imptrackers = Array.isArray(n.imptrackers) ? n.imptrackers : [];
@@ -545,49 +469,8 @@ function attachNativeFromAdm(resp, bid) {
         ortb: n
       };
     }
-  } catch {
-    // ignore malformed adm JSON
+  } catch { /* ignore */
   }
-}
-
-/**
- * Merge page-provided IAB content into ORTB's site.content and app.content.
- *
- * - Chooses site.content vs app.content automatically
- * - Copies all fields from params.iabContent as-is
- * - Only alias applied: `live` -> `livestream`
- * - Ignores null/undefined values
- *
- *  @param {Object} ortb              The OpenRTB request object to mutate.
- *  @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
- *  @returns {void}
- */
-function applyIabContent(ortb, bidRequests) {
-  const holder = bidRequests.find(b => b?.params?.iabContent);
-  const src = holder && holder.params.iabContent;
-  if (!src || typeof src !== 'object') {
-    return
-  }
-
-  let parent;
-  if (ortb.app) {
-    ortb.app = ortb.app || {};
-    parent = ortb.app;
-  } else {
-    ortb.site = ortb.site || {};
-    parent = ortb.site;
-  }
-
-  parent.content = parent.content || {};
-  const dst = parent.content;
-
-  Object.entries(src).forEach(([k, v]) => {
-    if (v == null) {
-      return
-    }
-    const key = (k === 'live') ? 'livestream' : k;
-    dst[key] = v;
-  });
 }
 
 /**
@@ -651,7 +534,7 @@ function ensureVideoAsset(resp, bid, ctx) {
     return;
   }
 
-  // legacy fallback
+  // Fallback to legacy delivery URL
   const params = deepAccess(ctx, 'bidRequest.params') || {};
   const creativeId = bid.crid || bid.id;
   if (creativeId && params.supplyId) {
@@ -693,6 +576,271 @@ function ensureBannerSize(resp, ctx) {
 
 function isNotBlank(v) {
   return (typeof v === 'string') && v.trim().length > 0;
+}
+
+/**
+ * Apply GDPR consent to ORTB.
+ * Sets `regs.ext.gdpr` (0/1) and `user.consent` (2.6) + `user.ext.consent` (2.5 fallback).
+ * No-op if consent info is absent.
+ *
+ * @param {Object} ortb
+ * @param {Object} bidderReq
+ * @returns {void}
+ */
+function applyConsent(ortb, bidderReq) {
+  const gdpr = bidderReq?.gdprConsent;
+  if (!gdpr) {
+    return;
+  }
+
+  const applies = (typeof gdpr.gdprApplies === 'boolean') ? gdpr.gdprApplies : undefined;
+  const consent = (typeof gdpr.consentString === 'string') ? gdpr.consentString : undefined;
+
+  if (applies !== undefined) {
+    ortb.regs = ortb.regs || {};
+    ortb.regs.ext = ortb.regs.ext || {};
+    ortb.regs.ext.gdpr = applies ? 1 : 0;
+  }
+  if (consent) {
+    ortb.user = ortb.user || {};
+    ortb.user.consent = consent;          // ORTB 2.6
+    ortb.user.ext = ortb.user.ext || {};
+    ortb.user.ext.consent = consent;      // ORTB 2.5 fallback
+  }
+}
+
+/**
+ * Apply user EIDs to ORTB.
+ * Copies the first adunit’s `userIdAsEids` into `user.eids`.
+ * No-op if none present.
+ *
+ * @param {Object} ortb
+ * @param {BidRequest[]} bidRequests
+ * @returns {void}
+ */
+function applyEids(ortb, bidRequests) {
+  // take the first adunit that has eids
+  const withEids = bidRequests.find(b => Array.isArray(b.userIdAsEids) && b.userIdAsEids.length);
+  if (withEids) {
+    ortb.user = ortb.user || {};
+    ortb.user.eids = withEids.userIdAsEids;
+  }
+}
+
+/**
+ * Apply supply chain (schain) to ORTB.
+ * Prefers `b.ortb2.source.ext.schain`; falls back to legacy `b.schain`.
+ * Writes to `source.ext.schain`. No-op if unavailable.
+ *
+ * @param {Object} ortb
+ * @param {BidRequest[]} bidRequests
+ * @returns {void}
+ */
+function applySchain(ortb, bidRequests) {
+  const holder = bidRequests.find(b => deepAccess(b, 'ortb2.source.ext.schain') || b.schain);
+  const schain = deepAccess(holder, 'ortb2.source.ext.schain') || holder?.schain;
+  if (!schain) {
+    return;
+  }
+  ortb.source = ortb.source || {};
+  ortb.source.ext = ortb.source.ext || {};
+  ortb.source.ext.schain = schain;
+}
+
+/**
+ * Apply per-impression fields.
+ * For each bidRequest, finds matching `imp` by `id` and sets:
+ * - `imp.tagid` from `params.adslotId` (when present).
+ * No-op for missing matches.
+ *
+ * @param {Object} ortb
+ * @param {BidRequest[]} bidRequests
+ * @returns {void}
+ */
+function applyImps(ortb, bidRequests) {
+  const imps = ortb.imp || [];
+  bidRequests.forEach((br) => {
+    const imp = imps.find(i => i && i.id === br.bidId);
+    if (!imp) {
+      return;
+    }
+    // tagid from params.adslotId
+    if (br.params && br.params.adslotId != null) {
+      imp.tagid = br.params.adslotId;
+    }
+  });
+}
+
+/**
+ * Apply Price Floors per impression.
+ * For each bidRequest with `getFloor()`, finds the matching ORTB `imp` by `id`
+ * and sets `imp.bidfloor` (CPM in currency units) and `imp.bidfloorcur`.
+ * Uses `derivePrimaryMediaType(bid)` and passes size as a single `[w,h]` when
+ * exactly one banner size exists; otherwise uses `'*'`. No-ops when `getFloor`
+ * is missing, currencies differ, the floor is non-finite, or no matching `imp`.
+ *
+ * @param {Object} ortb            OpenRTB request to mutate (`imp[]` is read/updated)
+ * @param {BidRequest[]} bidRequests
+ * @returns {void}
+ */
+function applyBidFloors(ortb, bidRequests) {
+  const imps = ortb.imp || [];
+  bidRequests.forEach((br) => {
+    if (typeof br.getFloor !== 'function') {
+      return;
+    }
+    const imp = imps.find(i => i && i.id === br.bidId);
+    if (!imp) {
+      return;
+    }
+
+    const mediaType = derivePrimaryMediaType(br);
+    const sizes = extractSizePairs(br);
+    const sizeArg = (sizes.length !== 1) ? '*' : sizes[0]; // [w,h] or '*'
+
+    const floor = br.getFloor({
+      currency: CURRENCY_CODE,
+      mediaType: mediaType || '*',
+      size: sizeArg
+    });
+
+    if (floor && floor.currency === CURRENCY_CODE && typeof floor.floor === 'number' && isFinite(floor.floor)) {
+      imp.bidfloor = floor.floor;
+      imp.bidfloorcur = CURRENCY_CODE;
+    }
+  });
+}
+
+/**
+ * Merge page-provided IAB content into ORTB's site.content and app.content.
+ *
+ * - Chooses site.content vs app.content automatically
+ * - Copies all fields from params.iabContent as-is
+ * - Only alias applied: `live` -> `livestream`
+ * - Ignores null/undefined values
+ *
+ *  @param {Object} ortb              The OpenRTB request object to mutate.
+ *  @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
+ *  @returns {void}
+ */
+function applyIabContent(ortb, bidRequests) {
+  const holder = bidRequests.find(b => b?.params?.iabContent);
+  const src = holder && holder.params.iabContent;
+  if (!src || typeof src !== 'object') {
+    return;
+  }
+
+  let parent;
+  if (ortb.app) {
+    ortb.app = ortb.app || {};
+    parent = ortb.app;
+  } else {
+    ortb.site = ortb.site || {};
+    parent = ortb.site;
+  }
+
+  parent.content = parent.content || {};
+  const dst = parent.content;
+
+  Object.entries(src).forEach(([k, v]) => {
+    if (v == null) {
+      return;
+    }
+    const key = (k === 'live') ? 'livestream' : k;
+    dst[key] = v;
+  });
+}
+
+/**
+ * Attach Virtual Minds (vm) extension to request.ext.vm.
+ * Merge order:
+ *   1) Page-level FPD (bidderRequest.ortb2.ext.vm) is copied as-is.
+ *   2) Adapter-derived fields overwrite (externalid, targeting).
+ *
+ * @param {Object} ortb - OpenRTB request to mutate
+ * @param {Array} bidRequests - Per-adunit bid requests
+ * @param {Object} bidderReq - Prebid bidderRequest (ortb2, refererInfo, auctionId, etc.)
+ */
+function applyVmExt(ortb, bidRequests, bidderReq) {
+  const firstExtId = bidRequests.map(b => b.params?.extId).find(Boolean);
+  const targetingObj = mergeKeyValues(bidRequests);
+  const targeting = kvToQueryString(targetingObj);
+
+  ortb.ext = ortb.ext || {};
+  ortb.ext.vm = ortb.ext.vm || {};
+
+  const vmPage = deepAccess(bidderReq, 'ortb2.ext.vm');
+  if (vmPage && typeof vmPage === 'object') {
+    Object.assign(ortb.ext.vm, vmPage);
+  }
+
+  if (firstExtId) {
+    ortb.ext.vm.externalid = firstExtId;
+  }
+  if (targeting) {
+    ortb.ext.vm.targeting = targeting;
+  }
+}
+
+/**
+ * Resolve the primary media type (priority: banner > video > native).
+ *
+ * @param {BidRequest} bid
+ * @returns {'banner'|'video'|'native'|undefined} primary media type or undefined
+ */
+function derivePrimaryMediaType(bid) {
+  const mt = bid.mediaTypes || {};
+  if (mt.banner) {
+    return 'banner';
+  }
+  if (mt.video) {
+    return 'video';
+  }
+  if (mt.native) {
+    return 'native';
+  }
+  return undefined;
+}
+
+/**
+ * Extract banner sizes as unique [w,h] pairs.
+ * Prefers `mediaTypes.banner.sizes`; falls back to legacy `sizes`.
+ * Accepts `[w,h]` or `[[w,h], …]`, flattens and de-duplicates (order-preserving).
+ * Ignores malformed entries. Video sizes are handled via `mediaTypes.video.playerSize`.
+ *
+ * @param {BidRequest} bid
+ * @returns {Array<[number, number]>} de-duplicated array of `[width, height]` pairs
+ */
+function extractSizePairs(bid) {
+  const { mediaTypes } = bid;
+  const sizes = [];
+
+  if (mediaTypes && mediaTypes.banner && Array.isArray(mediaTypes.banner.sizes)) {
+    if (Array.isArray(mediaTypes.banner.sizes[0])) {
+      sizes.push(...mediaTypes.banner.sizes);
+    } else {
+      sizes.push(mediaTypes.banner.sizes);
+    }
+  } else if (Array.isArray(bid.sizes)) {
+    if (Array.isArray(bid.sizes[0])) {
+      sizes.push(...bid.sizes);
+    } else {
+      sizes.push(bid.sizes);
+    }
+  }
+
+  // dedupe
+  const key = (p) => (Array.isArray(p) && p.length >= 2) ? (p[0] + DIMENSION_SIGN + p[1]) : '';
+  const seen = new Set();
+  const out = [];
+  sizes.forEach((pair) => {
+    const k = key(pair);
+    if (k && !seen.has(k)) {
+      seen.add(k);
+      out.push(pair);
+    }
+  });
+  return out;
 }
 
 registerBidder(spec);
