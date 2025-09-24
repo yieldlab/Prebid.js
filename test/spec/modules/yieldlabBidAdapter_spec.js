@@ -671,4 +671,121 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(syncs).to.deep.equal([]);
     });
   });
+
+  describe('applyBidFloors', () => {
+    it('sets bidfloor/bidfloorcur from getFloor (banner)', () => {
+      const bid = DEFAULT_REQUEST();
+      let lastArgs;
+      bid.getFloor = (args) => {
+        lastArgs = args;
+        return { currency: 'EUR', floor: 1.1 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-bnr', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(lastArgs).to.deep.equal({ currency: 'EUR', mediaType: 'banner', size: [728, 90] });
+      expect(ortb.imp[0].bidfloor).to.equal(1.1);
+      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
+    });
+
+    it('sets bidfloor using "*" size for video (current behavior)', () => {
+      const bid = VIDEO_REQUEST();
+      let lastArgs;
+      bid.getFloor = (args) => {
+        lastArgs = args;
+        return { currency: 'EUR', floor: 2.5 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-vid', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(lastArgs.mediaType).to.equal('video');
+      expect(lastArgs.size).to.equal('*'); // matches current adapter logic
+      expect(ortb.imp[0].bidfloor).to.equal(2.5);
+      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
+    });
+
+    it('does not set bidfloor when getFloor currency mismatches', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.getFloor = () => ({ currency: 'USD', floor: 3.3 });
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-curr', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb.imp[0]).to.not.have.property('bidfloor');
+      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
+    });
+  });
+
+  describe('applyConsent', () => {
+    it('maps GDPR consent to regs.ext.gdpr and user.consent/user.ext.consent', () => {
+      const bid = DEFAULT_REQUEST();
+      const bidderRequest = {
+        auctionId: 'gdpr-1',
+        timeout: 400,
+        gdprConsent: { gdprApplies: true, consentString: 'CONSENT-STRING' }
+      };
+
+      const req = spec.buildRequests([bid], bidderRequest);
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.have.nested.property('regs.ext.gdpr', 1);
+      expect(ortb).to.have.nested.property('user.consent', 'CONSENT-STRING');
+      expect(ortb).to.have.nested.property('user.ext.consent', 'CONSENT-STRING');
+    });
+
+    it('sets regs.ext.gdpr=0 when gdprApplies is false and omits consent if missing', () => {
+      const bid = DEFAULT_REQUEST();
+      const bidderRequest = {
+        auctionId: 'gdpr-0',
+        timeout: 400,
+        gdprConsent: { gdprApplies: false }
+      };
+
+      const req = spec.buildRequests([bid], bidderRequest);
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.have.nested.property('regs.ext.gdpr', 0);
+      expect(ortb).to.not.have.nested.property('user.consent');
+      expect(ortb).to.not.have.nested.property('user.ext.consent');
+    });
+  });
+
+  describe('multiple imps', () => {
+    it('sets tagid per imp and merges VM targeting with later values overwriting earlier', () => {
+      const b1 = DEFAULT_REQUEST();
+      b1.params.adslotId = '1111';
+      b1.params.targeting = { k: '1' };
+
+      const b2 = DEFAULT_REQUEST();
+      b2.bidId = 'BID-2';
+      b2.params.adslotId = '2222';
+      b2.params.targeting = { k: '2', x: 'y' };
+
+      const req = spec.buildRequests([b1, b2], { auctionId: 'multi', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      const imp1 = ortb.imp.find(i => i.id === b1.bidId);
+      const imp2 = ortb.imp.find(i => i.id === b2.bidId);
+      expect(imp1.tagid).to.equal('1111');
+      expect(imp2.tagid).to.equal('2222');
+
+      // mergeKeyValues + kvToQueryString: later overwrite, order preserved
+      expect(ortb).to.have.nested.property('ext.vm.targeting', 'k=2&x=y');
+    });
+  });
+
+  describe('applySchain', () => {
+    it('reads schain from b.ortb2.source.ext.schain', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.ortb2 = { source: { ext: { schain: bid.schain } } };
+      delete bid.schain;
+
+      const req = spec.buildRequests([bid], { auctionId: 'schain-fpd', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
+    });
+  });
 });
