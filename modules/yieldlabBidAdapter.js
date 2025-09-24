@@ -513,32 +513,17 @@ function isNotBlank(v) {
 
 /**
  * Apply GDPR consent to ORTB.
- * Sets `regs.ext.gdpr` (0/1) and `user.consent` (2.6) + `user.ext.consent` (2.5 fallback).
- * No-op if consent info is absent.
+ * Mirrors 2.5 fields (regs.ext.gdpr=1, user.ext.consent) into 2.6 (regs.gdpr, user.consent).
  *
  * @param {Object} ortb
- * @param {Object} bidderReq
  * @returns {void}
  */
-function applyConsent(ortb, bidderReq) {
-  const gdpr = bidderReq?.gdprConsent;
-  if (!gdpr) {
-    return;
+function applyConsent(ortb) {
+  if (ortb.regs?.ext?.gdpr !== undefined) {
+    ortb.regs.gdpr = ortb.regs.ext.gdpr; // mirrors 0 or 1
   }
-
-  const applies = (typeof gdpr.gdprApplies === 'boolean') ? gdpr.gdprApplies : undefined;
-  const consent = (typeof gdpr.consentString === 'string') ? gdpr.consentString : undefined;
-
-  if (applies !== undefined) {
-    ortb.regs = ortb.regs || {};
-    ortb.regs.ext = ortb.regs.ext || {};
-    ortb.regs.ext.gdpr = applies ? 1 : 0;
-  }
-  if (consent) {
-    ortb.user = ortb.user || {};
-    ortb.user.consent = consent;          // ORTB 2.6
-    ortb.user.ext = ortb.user.ext || {};
-    ortb.user.ext.consent = consent;      // ORTB 2.5 fallback
+  if (ortb.user?.ext?.consent !== undefined) {
+    ortb.user.consent = ortb.user.ext.consent; // mirrors even empty string
   }
 }
 

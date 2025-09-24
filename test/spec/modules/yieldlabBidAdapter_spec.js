@@ -686,36 +686,45 @@ describe('yieldlabBidAdapter (ORTB)', () => {
   });
 
   describe('applyConsent', () => {
-    it('maps GDPR consent to regs.ext.gdpr and user.consent/user.ext.consent', () => {
+    it('mirrors 2.5 fields (regs.ext.gdpr=1, user.ext.consent) into 2.6 (regs.gdpr, user.consent)', () => {
       const bid = DEFAULT_REQUEST();
       const bidderRequest = {
-        auctionId: 'gdpr-1',
+        auctionId: 'gdpr-mirror-1',
         timeout: 400,
-        gdprConsent: { gdprApplies: true, consentString: 'CONSENT-STRING' }
+        ortb2: {
+          regs: { ext: { gdpr: 1 } },
+          user: { ext: { consent: 'CONSENT-STRING' } }
+        }
       };
 
       const req = spec.buildRequests([bid], bidderRequest);
       const ortb = JSON.parse(req.data);
 
+      // source (2.5) still present
       expect(ortb).to.have.nested.property('regs.ext.gdpr', 1);
-      expect(ortb).to.have.nested.property('user.consent', 'CONSENT-STRING');
       expect(ortb).to.have.nested.property('user.ext.consent', 'CONSENT-STRING');
+      // mirrored (2.6)
+      expect(ortb).to.have.nested.property('regs.gdpr', 1);
+      expect(ortb).to.have.nested.property('user.consent', 'CONSENT-STRING');
     });
 
-    it('sets regs.ext.gdpr=0 when gdprApplies is false and omits consent if missing', () => {
+    it('mirrors when gdpr=0 and leaves consent absent if not provided', () => {
       const bid = DEFAULT_REQUEST();
       const bidderRequest = {
-        auctionId: 'gdpr-0',
+        auctionId: 'gdpr-mirror-0',
         timeout: 400,
-        gdprConsent: { gdprApplies: false }
+        ortb2: {
+          regs: { ext: { gdpr: 0 } }
+          // no user.ext.consent
+        }
       };
 
       const req = spec.buildRequests([bid], bidderRequest);
       const ortb = JSON.parse(req.data);
 
       expect(ortb).to.have.nested.property('regs.ext.gdpr', 0);
+      expect(ortb).to.have.nested.property('regs.gdpr', 0);
       expect(ortb).to.not.have.nested.property('user.consent');
-      expect(ortb).to.not.have.nested.property('user.ext.consent');
     });
   });
 
