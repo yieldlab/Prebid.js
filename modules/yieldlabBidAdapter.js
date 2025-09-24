@@ -76,7 +76,6 @@ export const spec = {
         if (!ortb.site.ref) ortb.site.ref = ref;
       }
 
-      // GDPR (map to 2.6 + 2.5 fallback)
       applyConsent(ortb, bidderReq);
 
       applyEids(ortb, validBidRequests);
@@ -547,22 +546,14 @@ function applyEids(ortb, bidRequests) {
 
 /**
  * Apply supply chain (schain) to ORTB.
- * Prefers `b.ortb2.source.ext.schain`; falls back to legacy `b.schain`.
- * Writes to `source.ext.schain`. No-op if unavailable.
- *
+ * Mirrors 2.5 field (source.ext.schain) into 2.6 (source.schain).
  * @param {Object} ortb
- * @param {BidRequest[]} bidRequests
  * @returns {void}
  */
-function applySchain(ortb, bidRequests) {
-  const holder = bidRequests.find(b => deepAccess(b, 'ortb2.source.ext.schain') || b.schain);
-  const schain = deepAccess(holder, 'ortb2.source.ext.schain') || holder?.schain;
-  if (!schain) {
-    return;
+function applySchain(ortb) {
+  if (ortb.source?.ext?.schain !== undefined) {
+    ortb.source.schain = ortb.source.ext.schain;
   }
-  ortb.source = ortb.source || {};
-  ortb.source.ext = ortb.source.ext || {};
-  ortb.source.ext.schain = schain;
 }
 
 /**

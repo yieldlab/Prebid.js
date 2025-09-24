@@ -88,7 +88,10 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         auctionId: 'auction-123',
         timeout: 700,
         refererInfo: { page: 'https://example.test/page', ref: 'https://ref.test/ref' },
-        ortb2: { ext: { vm: { gp: true, foo: 'bar' } } }
+        ortb2: {
+          ext: { vm: { gp: true, foo: 'bar' } },
+          source: { ext: { schain: bid.schain } }
+        }
       };
 
       const req = spec.buildRequests([bid], bidderRequest);
@@ -118,16 +121,15 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       // ext.vm (pass-through + additions)
       expect(ortb).to.have.nested.property('ext.vm');
-      // pass-through from ortb2.ext.vm
       expect(ortb.ext.vm.gp).to.equal(true);
       expect(ortb.ext.vm.foo).to.equal('bar');
-      // additions by adapter
       expect(ortb.ext.vm.externalid).to.equal('abc');
       expect(ortb.ext.vm.targeting).to.equal('key1=value1&key2=value2&notDoubleEncoded=value3,value4');
 
-      // user.eids & source.schain (mapped by converter)
+      // user.eids (from adapter) & schain (from FPD/converter)
       expect(ortb).to.have.nested.property('user.eids').that.is.an('array').with.length(2);
       expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
+      expect(ortb).to.have.nested.property('source.schain.ver', '1.0');
     });
 
     describe('applyIabContent', () => {
@@ -753,15 +755,20 @@ describe('yieldlabBidAdapter (ORTB)', () => {
   });
 
   describe('applySchain', () => {
-    it('reads schain from b.ortb2.source.ext.schain', () => {
+    it('mirrors source.ext.schain to source.schain', () => {
       const bid = DEFAULT_REQUEST();
-      bid.ortb2 = { source: { ext: { schain: bid.schain } } };
-      delete bid.schain;
 
-      const req = spec.buildRequests([bid], { auctionId: 'schain-fpd', timeout: 300 });
+      const bidderRequest = {
+        auctionId: 'schain-fpd',
+        timeout: 300,
+        ortb2: { source: { ext: { schain: bid.schain } } }
+      };
+
+      const req = spec.buildRequests([bid], bidderRequest);
       const ortb = JSON.parse(req.data);
 
       expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
+      expect(ortb).to.have.nested.property('source.schain.ver', '1.0');
     });
   });
 });
