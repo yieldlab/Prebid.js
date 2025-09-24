@@ -21,8 +21,6 @@ const BID_RESPONSE_TTL_SEC = 300;
 const CURRENCY_CODE = 'EUR';
 const OUTSTREAMPLAYER_URL = 'https://ad.adition.com/dynamic.ad?a=o193092&ma_loadEvent=ma-start-event';
 const GVLID = 70;
-const IMG_TYPE_ICON = 1;
-const IMG_TYPE_MAIN = 3;
 const DIMENSION_SIGN = 'x';
 
 const MTYPE = {
@@ -34,7 +32,7 @@ const MTYPE = {
 export const spec = {
   code: BIDDER_CODE,
   gvlid: GVLID,
-  supportedMediaTypes: [BANNER, NATIVE, VIDEO],
+  supportedMediaTypes: [BANNER, VIDEO, NATIVE],
 
   /**
    * Validate the incoming bid params.
@@ -120,10 +118,6 @@ export const spec = {
       }
 
       attachNativeFromAdm(resp, bid);
-
-      if (resp.mediaType === NATIVE && resp.native) {
-        enrichNativeFromAssets(resp.native);
-      }
 
       ensureMeta(resp, bid);
 
@@ -335,66 +329,6 @@ function ensureMeta(resp, bid) {
   }
   if (bid?.ext?.dsa) {
     resp.meta.dsa = bid.ext.dsa;
-  }
-}
-
-/**
- * Enrich PBJS native object with convenience fields from ORTB assets.
- * Works whether `native.assets` is already there or `native.ortb.assets`.
- * Single-pass extraction to avoid multiple .find() scans.
- * @param {Object} nativeObj
- */
-function enrichNativeFromAssets(nativeObj) {
-  const ortb = nativeObj.ortb || {};
-  const assets = (nativeObj.assets || ortb.assets) || [];
-
-  let titleText;
-  let bodyText;
-  let icon;
-  let image;
-
-  for (let i = 0; i < assets.length; i++) {
-    const a = assets[i];
-    if (!a) {
-      continue;
-    }
-
-    if (!titleText && a.title && typeof a.title.text === 'string') {
-      titleText = a.title.text;
-      continue;
-    }
-    if (!bodyText && a.data && typeof a.data.value === 'string') {
-      bodyText = a.data.value;
-      continue;
-    }
-    if (!icon && a.img && a.img.type === IMG_TYPE_ICON && a.img.url) {
-      icon = { url: a.img.url, width: a.img.w, height: a.img.h };
-      continue;
-    }
-    if (!image && a.img && a.img.type === IMG_TYPE_MAIN && a.img.url) {
-      image = { url: a.img.url, width: a.img.w, height: a.img.h };
-    }
-  }
-
-  if (titleText && !nativeObj.title) {
-    nativeObj.title = titleText;
-  }
-  if (bodyText && !nativeObj.body) {
-    nativeObj.body = bodyText;
-  }
-
-  if (icon && !nativeObj.icon) {
-    nativeObj.icon = icon;
-  }
-  if (image && !nativeObj.image) {
-    nativeObj.image = image;
-  }
-
-  if (!nativeObj.clickUrl && ortb.link?.url) {
-    nativeObj.clickUrl = ortb.link.url;
-  }
-  if (!nativeObj.impressionTrackers && Array.isArray(ortb.imptrackers)) {
-    nativeObj.impressionTrackers = ortb.imptrackers;
   }
 }
 

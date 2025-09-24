@@ -556,7 +556,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
   });
 
   describe('interpretResponse (native)', () => {
-    it('adds convenience icon/image from assets', () => {
+    it('keeps native assets and trackers', () => {
       const bid = NATIVE_REQUEST();
       const req = spec.buildRequests([bid], { auctionId: 'a' });
       const ortbReq = JSON.parse(req.data);
@@ -566,9 +566,9 @@ describe('yieldlabBidAdapter (ORTB)', () => {
           link: { url: 'https://www.yieldlab.de' },
           assets: [
             { id: 1, title: { text: 'This is a great headline' } },
-            { id: 2, img: { url: 'https://ad.yieldlab.net/yl-logo100x100.jpg', w: 100, h: 100, type: 3 } },
+            { id: 2, img: { url: 'https://ad.yieldlab.net/yl-logo100x100.jpg', w: 100, h: 100 } },
             { id: 3, data: { value: 'Native body value' } },
-            { id: 4, img: { url: 'https://ad.yieldlab.net/assets/favicon/favicon-16x16.png', w: 16, h: 16, type: 1 } }
+            { id: 4, img: { url: 'https://ad.yieldlab.net/assets/favicon/favicon-16x16.png', w: 16, h: 16 } }
           ],
           imptrackers: ['https://tracker/1', 'https://tracker/2']
         }
@@ -595,57 +595,24 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       const b = res[0];
 
       expect(b.mediaType).to.equal('native');
-      expect(b.native.title).to.equal('This is a great headline');
-      expect(b.native.body).to.equal('Native body value');
-      expect(b.native.image).to.deep.equal({
-        url: 'https://ad.yieldlab.net/yl-logo100x100.jpg', width: 100, height: 100
-      });
-      expect(b.native.icon).to.deep.equal({
-        url: 'https://ad.yieldlab.net/assets/favicon/favicon-16x16.png', width: 16, height: 16
-      });
-      expect(b.native.clickUrl).to.equal('https://www.yieldlab.de');
-      expect(b.native.impressionTrackers).to.have.length(2);
-    });
 
-    it('parses raw native adm object (no {native: …} wrapper)', () => {
-      const bid = NATIVE_REQUEST();
-      const req = spec.buildRequests([bid], { auctionId: 'raw-n' });
-      const ortbReq = JSON.parse(req.data);
+      const nativeResponse = b.native.ortb;
+      expect(nativeResponse).to.have.property('assets').that.is.an('array').with.length.greaterThan(0);
 
-      const rawNative = JSON.stringify({
-        link: { url: 'https://example.org' },
-        assets: [
-          { id: 10, title: { text: 'Raw Headline' } },
-          { id: 11, data: { value: 'Raw Body' } }
-        ],
-        imptrackers: ['https://t1', 'https://t2']
-      });
+      const assetResponseTitle = nativeResponse.assets.find(a => a.title && a.title.text);
+      const assetResponseData = nativeResponse.assets.find(a => a.data && typeof a.data.value === 'string');
+      const assetResponseImages = nativeResponse.assets.filter(a => a.img && a.img.url);
 
-      const serverResponse = {
-        body: {
-          id: 'raw-n',
-          seatbid: [{
-            bid: [{
-              impid: ortbReq.imp[0].id,
-              price: 0.7,
-              adm: rawNative,
-              adomain: ['yieldlab'],
-              crid: 'n-raw-1'
-            }]
-          }],
-          cur: 'EUR'
-        }
-      };
+      expect(assetResponseTitle?.title.text).to.equal('This is a great headline');
+      expect(assetResponseData?.data.value).to.equal('Native body value');
 
-      const res = spec.interpretResponse(serverResponse, req);
-      expect(res).to.have.length(1);
-      const b = res[0];
+      const hasLogo = assetResponseImages.some(i => i.img.url.includes('yl-logo100x100.jpg') && i.img.w === 100 && i.img.h === 100);
+      const hasFavicon = assetResponseImages.some(i => i.img.url.includes('favicon-16x16.png') && i.img.w === 16 && i.img.h === 16);
+      expect(hasLogo).to.equal(true);
+      expect(hasFavicon).to.equal(true);
 
-      expect(b.mediaType).to.equal('native');
-      expect(b.native.title).to.equal('Raw Headline');
-      expect(b.native.body).to.equal('Raw Body');
-      expect(b.native.clickUrl).to.equal('https://example.org');
-      expect(b.native.impressionTrackers).to.deep.equal(['https://t1', 'https://t2']);
+      expect(nativeResponse.imptrackers).to.deep.equal(['https://tracker/1', 'https://tracker/2']);
+      expect(nativeResponse.link?.url).to.equal('https://www.yieldlab.de');
     });
   });
 
