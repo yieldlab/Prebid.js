@@ -128,8 +128,7 @@ export const spec = {
       context: {
         currency: CURRENCY_CODE,
         netRevenue: false,
-        ttl: BID_RESPONSE_TTL_SEC,
-        nativeRequest: { eventtrackers: [{ event: 1, methods: [1, 2] }] }
+        ttl: BID_RESPONSE_TTL_SEC
       },
       request: requestFn,
       bidResponse: bidResponseFn
