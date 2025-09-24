@@ -179,7 +179,7 @@ export const spec = {
   /**
    * Register the user sync pixels which should be dropped after the auction.
    */
-  getUserSyncs(syncOptions, serverResponses, gdprConsent, uspConsent) {
+  getUserSyncs(syncOptions, serverResponses, gdprConsent, _uspConsent) {
     const syncs = [];
 
     if (syncOptions.iframeEnabled) {
