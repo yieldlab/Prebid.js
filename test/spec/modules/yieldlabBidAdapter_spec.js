@@ -363,140 +363,8 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(bidResponse.height).to.equal(480); // from playerSize
     });
 
-    describe('ensureVideoAsset', () => {
-      it('uses inline VAST from adm when present', () => {
-        const bid = VIDEO_REQUEST();
-        const req = spec.buildRequests([bid], { auctionId: 'vid-xml' });
-        const ortbReq = JSON.parse(req.data);
-
-        const inlineVast = '<VAST version="3.0"><Ad></Ad></VAST>';
-        const serverResponse = {
-          body: {
-            id: 'vid-xml',
-            seatbid: [{
-              bid: [{
-                impid: ortbReq.imp[0].id,
-                price: 1.1,
-                adm: inlineVast,
-                w: 640,
-                h: 480,
-                adomain: ['yieldlab'],
-                crid: 'v-xml-1'
-              }]
-            }],
-            cur: 'EUR'
-          }
-        };
-
-        const res = spec.interpretResponse(serverResponse, req);
-        expect(res).to.have.length(1);
-        const bidResponse = res[0];
-
-        expect(bidResponse.mediaType).to.equal('video');
-        expect(bidResponse.vastXml).to.equal(inlineVast);
-        expect(bidResponse).to.not.have.property('vastUrl');
-      });
-
-      it('falls back to nurl when provided', () => {
-        const bid = VIDEO_REQUEST();
-        const req = spec.buildRequests([bid], { auctionId: 'vid-nurl' });
-        const ortbReq = JSON.parse(req.data);
-
-        const nurl = 'https://vast.example.com/tag.xml';
-        const serverResponse = {
-          body: {
-            id: 'vid-nurl',
-            seatbid: [{
-              bid: [{
-                impid: ortbReq.imp[0].id,
-                price: 1.2,
-                adm: '', // not VAST XML
-                nurl,
-                w: 640,
-                h: 480,
-                adomain: ['yieldlab'],
-                crid: 'v-nurl-1'
-              }]
-            }],
-            cur: 'EUR'
-          }
-        };
-
-        const res = spec.interpretResponse(serverResponse, req);
-        expect(res).to.have.length(1);
-        const bidResponse = res[0];
-
-        expect(bidResponse.mediaType).to.equal('video');
-        expect(bidResponse.vastUrl).to.equal(nurl);
-        expect(bidResponse).to.not.have.property('vastXml');
-      });
-
-      it('does not override an existing non-empty vastUrl (idempotent)', () => {
-        const bid = VIDEO_REQUEST();
-        const req = spec.buildRequests([bid], { auctionId: 'vid-nourride' });
-        const ortbReq = JSON.parse(req.data);
-
-        // provide a good nurl so converter/adapter sets vastUrl, then ensure no fabrication happens
-        const nurl = 'https://vast.example.com/already-there.xml';
-        const serverResponse = {
-          body: {
-            id: 'vid-nourride',
-            seatbid: [{
-              bid: [{
-                impid: ortbReq.imp[0].id,
-                price: 1.25,
-                adm: '', // not VAST
-                nurl,
-                adomain: ['yieldlab'],
-                crid: 'v-idem-1'
-              }]
-            }],
-            cur: 'EUR'
-          }
-        };
-
-        const res = spec.interpretResponse(serverResponse, req);
-        expect(res).to.have.length(1);
-        const bidResponse = res[0];
-
-        expect(bidResponse.mediaType).to.equal('video');
-        expect(bidResponse.vastUrl).to.equal(nurl); // untouched
-        expect(bidResponse).to.not.have.property('vastXml');
-      });
-
-      it('fabricates vastUrl from crid + supplyId when needed', () => {
-        const bid = VIDEO_REQUEST();
-        const req = spec.buildRequests([bid], { auctionId: 'vid-fab' });
-        const ortbReq = JSON.parse(req.data);
-
-        const crid = 'v-99';
-        const serverResponse = {
-          body: {
-            id: 'vid-fab',
-            seatbid: [{
-              bid: [{
-                impid: ortbReq.imp[0].id,
-                price: 1.3,
-                // no adm VAST, no nurl -> should fabricate
-                adomain: ['yieldlab'],
-                crid
-              }]
-            }],
-            cur: 'EUR'
-          }
-        };
-
-        const res = spec.interpretResponse(serverResponse, req);
-        expect(res).to.have.length(1);
-        const bidResponse = res[0];
-
-        expect(bidResponse.mediaType).to.equal('video');
-        expect(bidResponse).to.have.property('vastUrl');
-        expect(bidResponse.vastUrl).to.match(new RegExp(`^https://ad.yieldlab.net/d/${crid}/2222/\\?ts=\\d+$`));
-        expect(bidResponse).to.not.have.property('vastXml');
-      });
-
-      it('sanitizes non-VAST vastXml or blank strings from the converter', () => {
+    describe('sanitizeVideoAsset', () => {
+      it('only sanitizes converter output (clears blank strings)', () => {
         const bid = VIDEO_REQUEST();
         const req = spec.buildRequests([bid], { auctionId: 'vid-sanitize' });
         const ortbReq = JSON.parse(req.data);
@@ -508,8 +376,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
               bid: [{
                 impid: ortbReq.imp[0].id,
                 price: 1.0,
-                adm: 'not xml', // ortb converter applies this to vastXml
-                // no nurl, no ids to fabricate
+                adm: ' ',
                 adomain: ['yieldlab']
               }]
             }],
@@ -520,41 +387,9 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
         const bidResponse = res[0];
-
         expect(bidResponse.mediaType).to.equal('video');
-        // after sanitization, they should be absent or blank
-        expect(bidResponse.vastUrl && bidResponse.vastUrl.trim()).to.be.oneOf([undefined, '']);
-        expect(bidResponse.vastXml && bidResponse.vastXml.trim()).to.be.oneOf([undefined, '']);
-      });
-
-      it('ignores non-video bids', () => {
-        const bid = DEFAULT_REQUEST(); // banner
-        const req = spec.buildRequests([bid], { auctionId: 'non-video' });
-        const ortbReq = JSON.parse(req.data);
-
-        const serverResponse = {
-          body: {
-            id: 'non-video',
-            seatbid: [{
-              bid: [{
-                impid: ortbReq.imp[0].id,
-                price: 0.5,
-                adm: '<div>banner</div>',
-                adomain: ['yieldlab'],
-                crid: 'bn-1'
-              }]
-            }],
-            cur: 'EUR'
-          }
-        };
-
-        const res = spec.interpretResponse(serverResponse, req);
-        expect(res).to.have.length(1);
-        const bidResponse = res[0];
-
-        expect(bidResponse.mediaType).to.equal('banner');
-        expect(bidResponse).to.not.have.property('vastUrl');
-        expect(bidResponse).to.not.have.property('vastXml');
+        expect(bidResponse.vastUrl && bidResponse.vastUrl.trim()).to.be.undefined;
+        expect(bidResponse.vastXml && bidResponse.vastXml.trim()).to.be.undefined;
       });
     });
   });

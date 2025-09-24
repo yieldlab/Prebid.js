@@ -108,7 +108,7 @@ export const spec = {
       const resp = buildBidResponse(bid, ctx);
 
       ensureCreativeId(resp, bid, ctx);
-      ensureVideoAsset(resp, bid, ctx);
+      sanitizeVideoAsset(resp);
       ensureBannerSize(resp, ctx);
 
       if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
@@ -406,71 +406,23 @@ function attachNativeFromAdm(resp, bid) {
 }
 
 /**
- * Ensure a valid VAST asset ("vastUrl" or "vastXml") is present on a PBJS video bid.
+ * Sanitize video asset fields on a bid.
  *
- * Behavior:
- * - No-op for non-video bids.
- * - Sanitizes converter output:
- *   - trims and clears blank strings for "vastUrl"/"vastXml"
- *   - drops "vastXml" if it is not real inline VAST XML
- * - If a valid asset is already present after sanitization, it is kept as-is.
- * - Otherwise tries, in order:
- *   1) Use inline VAST found in "bid.adm" to set "resp.vastXml"
- *   2) Use "bid.nurl" to set "resp.vastUrl"
- *   3) Fabricate legacy delivery URL from "creativeId" (CRID/ID) and "params.supplyId"
- *      to set "resp.vastUrl"
- * - Never assigns empty strings; leaves "vastUrl"/"vastXml" undefined if nothing usable exists.
+ * - Only runs for `mediaType: 'video'`
+ * - Trims strings and clears blanks for `vastUrl` / `vastXml`
  *
- *   @param {Bid} resp            PBJS bid response being built.
- *   @param {Object} bid          Raw ORTB bid object (seatbid.bid[i]).
- *   @param {{ bidRequest?: BidRequest }} ctx    Converter context (contains the originating BidRequest).
- *   @returns {void}
+ * @param {Bid} resp  bid response to mutate
+ * @returns {void}
  */
-function ensureVideoAsset(resp, bid, ctx) {
+function sanitizeVideoAsset(resp) {
   if (resp.mediaType !== VIDEO) {
     return;
   }
-
-  // normalize blanks produced by the converter
   if (typeof resp.vastUrl === 'string' && !isNotBlank(resp.vastUrl)) {
     resp.vastUrl = undefined;
   }
   if (typeof resp.vastXml === 'string' && !isNotBlank(resp.vastXml)) {
     resp.vastXml = undefined;
-  }
-
-  // Clear vastXml if it's not actually inline VAST XML
-  if (typeof resp.vastXml === 'string') {
-    const xml = resp.vastXml.trim();
-    if (!xml || !/^</.test(xml) || !/<VAST(\s|>)/i.test(xml)) {
-      resp.vastXml = undefined;
-    }
-  }
-
-  // if a non-empty asset already exists, keep it
-  if (isNotBlank(resp.vastUrl) || isNotBlank(resp.vastXml)) {
-    return;
-  }
-
-  const adm = (typeof bid.adm === 'string') ? bid.adm.trim() : '';
-
-  // inline VAST in adm to vastXml
-  if (adm && /^</.test(adm) && /<VAST(\s|>)/i.test(adm)) {
-    resp.vastXml = adm;
-    return;
-  }
-
-  // VAST URL in nurl map to vastUrl
-  if (isNotBlank(bid.nurl)) {
-    resp.vastUrl = bid.nurl;
-    return;
-  }
-
-  // Fallback to legacy delivery URL
-  const params = deepAccess(ctx, 'bidRequest.params') || {};
-  const creativeId = bid.crid || bid.id;
-  if (creativeId && params.supplyId) {
-    resp.vastUrl = `${ENDPOINT}/d/${creativeId}/${params.supplyId}/?ts=${timestamp()}`;
   }
 }
 
