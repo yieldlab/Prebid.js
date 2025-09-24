@@ -245,19 +245,19 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       const res = spec.interpretResponse(serverResponse, req);
       expect(res).to.be.an('array').with.length(1);
-      const b = res[0];
+      const bidResponse = res[0];
 
-      expect(b.mediaType).to.equal('banner');
-      expect(b.cpm).to.equal(1.23);
-      expect(b.width).to.equal(728);
-      expect(b.height).to.equal(90);
-      expect(b.creativeId).to.equal('srv-1'); // fallback chain (id)
-      expect(b.dealId).to.equal('deal-42'); // mapped from dealid
-      expect(b.currency).to.equal('EUR');
-      expect(b.netRevenue).to.equal(false);
-      expect(b.ttl).to.equal(300);
-      expect(b.ad).to.equal('<div>banner creative</div>');
-      expect(b.meta.advertiserDomains).to.deep.equal(['yieldlab']);
+      expect(bidResponse.mediaType).to.equal('banner');
+      expect(bidResponse.cpm).to.equal(1.23);
+      expect(bidResponse.width).to.equal(728);
+      expect(bidResponse.height).to.equal(90);
+      expect(bidResponse.creativeId).to.equal('srv-1'); // fallback chain (id)
+      expect(bidResponse.dealId).to.equal('deal-42'); // mapped from dealid
+      expect(bidResponse.currency).to.equal('EUR');
+      expect(bidResponse.netRevenue).to.equal(false);
+      expect(bidResponse.ttl).to.equal(300);
+      expect(bidResponse.ad).to.equal('<div>banner creative</div>');
+      expect(bidResponse.meta.advertiserDomains).to.deep.equal(['yieldlab']);
     });
 
     it('sets advertiserDomains to ["n/a"] and passes through DSA when missing', () => {
@@ -284,11 +284,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       const res = spec.interpretResponse(serverResponse, req);
       expect(res).to.have.length(1);
-      const b = res[0];
+      const bidResponse = res[0];
 
-      expect(b.mediaType).to.equal('banner');
-      expect(b.meta.advertiserDomains).to.deep.equal(['n/a']);
-      expect(b.meta.dsa).to.deep.equal({ foo: 'bar' });
+      expect(bidResponse.mediaType).to.equal('banner');
+      expect(bidResponse.meta.advertiserDomains).to.deep.equal(['n/a']);
+      expect(bidResponse.meta.dsa).to.deep.equal({ foo: 'bar' });
     });
   });
 
@@ -319,13 +319,13 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       const res = spec.interpretResponse(serverResponse, req);
       expect(res).to.have.length(1);
-      const b = res[0];
+      const bidResponse = res[0];
 
-      expect(b.mediaType).to.equal('video');
-      expect(b.width).to.equal(640);
-      expect(b.height).to.equal(480);
-      expect(b.renderer).to.exist;
-      expect(b.renderer.id).to.equal(bid.bidId);
+      expect(bidResponse.mediaType).to.equal('video');
+      expect(bidResponse.width).to.equal(640);
+      expect(bidResponse.height).to.equal(480);
+      expect(bidResponse.renderer).to.exist;
+      expect(bidResponse.renderer.id).to.equal(bid.bidId);
     });
 
     it('uses playerSize when server omits w/h', () => {
@@ -352,11 +352,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       const res = spec.interpretResponse(serverResponse, req);
       expect(res).to.have.length(1);
-      const b = res[0];
+      const bidResponse = res[0];
 
-      expect(b.mediaType).to.equal('video');
-      expect(b.width).to.equal(640); // from playerSize
-      expect(b.height).to.equal(480); // from playerSize
+      expect(bidResponse.mediaType).to.equal('video');
+      expect(bidResponse.width).to.equal(640); // from playerSize
+      expect(bidResponse.height).to.equal(480); // from playerSize
     });
 
     describe('ensureVideoAsset', () => {
@@ -386,11 +386,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
-        const b = res[0];
+        const bidResponse = res[0];
 
-        expect(b.mediaType).to.equal('video');
-        expect(b.vastXml).to.equal(inlineVast);
-        expect(b).to.not.have.property('vastUrl');
+        expect(bidResponse.mediaType).to.equal('video');
+        expect(bidResponse.vastXml).to.equal(inlineVast);
+        expect(bidResponse).to.not.have.property('vastUrl');
       });
 
       it('falls back to nurl when provided', () => {
@@ -420,11 +420,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
-        const b = res[0];
+        const bidResponse = res[0];
 
-        expect(b.mediaType).to.equal('video');
-        expect(b.vastUrl).to.equal(nurl);
-        expect(b).to.not.have.property('vastXml');
+        expect(bidResponse.mediaType).to.equal('video');
+        expect(bidResponse.vastUrl).to.equal(nurl);
+        expect(bidResponse).to.not.have.property('vastXml');
       });
 
       it('does not override an existing non-empty vastUrl (idempotent)', () => {
@@ -453,11 +453,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
-        const b = res[0];
+        const bidResponse = res[0];
 
-        expect(b.mediaType).to.equal('video');
-        expect(b.vastUrl).to.equal(nurl); // untouched
-        expect(b).to.not.have.property('vastXml');
+        expect(bidResponse.mediaType).to.equal('video');
+        expect(bidResponse.vastUrl).to.equal(nurl); // untouched
+        expect(bidResponse).to.not.have.property('vastXml');
       });
 
       it('fabricates vastUrl from crid + supplyId when needed', () => {
@@ -484,12 +484,12 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
-        const b = res[0];
+        const bidResponse = res[0];
 
-        expect(b.mediaType).to.equal('video');
-        expect(b).to.have.property('vastUrl');
-        expect(b.vastUrl).to.match(new RegExp(`^https://ad.yieldlab.net/d/${crid}/2222/\\?ts=\\d+$`));
-        expect(b).to.not.have.property('vastXml');
+        expect(bidResponse.mediaType).to.equal('video');
+        expect(bidResponse).to.have.property('vastUrl');
+        expect(bidResponse.vastUrl).to.match(new RegExp(`^https://ad.yieldlab.net/d/${crid}/2222/\\?ts=\\d+$`));
+        expect(bidResponse).to.not.have.property('vastXml');
       });
 
       it('sanitizes non-VAST vastXml or blank strings from the converter', () => {
@@ -515,12 +515,12 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
-        const b = res[0];
+        const bidResponse = res[0];
 
-        expect(b.mediaType).to.equal('video');
+        expect(bidResponse.mediaType).to.equal('video');
         // after sanitization, they should be absent or blank
-        expect(b.vastUrl && b.vastUrl.trim()).to.be.oneOf([undefined, '']);
-        expect(b.vastXml && b.vastXml.trim()).to.be.oneOf([undefined, '']);
+        expect(bidResponse.vastUrl && bidResponse.vastUrl.trim()).to.be.oneOf([undefined, '']);
+        expect(bidResponse.vastXml && bidResponse.vastXml.trim()).to.be.oneOf([undefined, '']);
       });
 
       it('ignores non-video bids', () => {
@@ -546,11 +546,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const res = spec.interpretResponse(serverResponse, req);
         expect(res).to.have.length(1);
-        const b = res[0];
+        const bidResponse = res[0];
 
-        expect(b.mediaType).to.equal('banner');
-        expect(b).to.not.have.property('vastUrl');
-        expect(b).to.not.have.property('vastXml');
+        expect(bidResponse.mediaType).to.equal('banner');
+        expect(bidResponse).to.not.have.property('vastUrl');
+        expect(bidResponse).to.not.have.property('vastXml');
       });
     });
   });
@@ -592,11 +592,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       const res = spec.interpretResponse(serverResponse, req);
       expect(res).to.have.length(1);
-      const b = res[0];
+      const bidResponse = res[0];
 
-      expect(b.mediaType).to.equal('native');
+      expect(bidResponse.mediaType).to.equal('native');
 
-      const nativeResponse = b.native.ortb;
+      const nativeResponse = bidResponse.native.ortb;
       expect(nativeResponse).to.have.property('assets').that.is.an('array').with.length.greaterThan(0);
 
       const assetResponseTitle = nativeResponse.assets.find(a => a.title && a.title.text);
@@ -623,14 +623,14 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       const gdprConsent = { gdprApplies: true, consentString: 'CONSENT-STRING' };
       const syncs = spec.getUserSyncs(syncOptions, [], gdprConsent, '1YYY');
       expect(syncs).to.be.an('array').with.length(1);
-      const s = syncs[0];
-      expect(s.type).to.equal('iframe');
-      expect(s.url).to.match(/^https:\/\/ad.yieldlab.net\/d\/6846326\/766\/2x2\?/);
-      expect(s.url).to.include('type=h');
-      expect(s.url).to.include('gdpr=1');
-      expect(s.url).to.include('gdpr_consent=CONSENT-STRING');
-      expect(s.url).to.not.include('usp_consent');
-      expect(s.url).to.match(/ts=\d+/);
+      const sync = syncs[0];
+      expect(sync.type).to.equal('iframe');
+      expect(sync.url).to.match(/^https:\/\/ad.yieldlab.net\/d\/6846326\/766\/2x2\?/);
+      expect(sync.url).to.include('type=h');
+      expect(sync.url).to.include('gdpr=1');
+      expect(sync.url).to.include('gdpr_consent=CONSENT-STRING');
+      expect(sync.url).to.not.include('usp_consent');
+      expect(sync.url).to.match(/ts=\d+/);
     });
 
     it('returns empty when iframe syncs are disabled', () => {
@@ -721,20 +721,20 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
   describe('multiple imps', () => {
     it('sets tagid per imp and merges VM targeting with later values overwriting earlier', () => {
-      const b1 = DEFAULT_REQUEST();
-      b1.params.adslotId = '1111';
-      b1.params.targeting = { k: '1' };
+      const bid1 = DEFAULT_REQUEST();
+      bid1.params.adslotId = '1111';
+      bid1.params.targeting = { k: '1' };
 
-      const b2 = DEFAULT_REQUEST();
-      b2.bidId = 'BID-2';
-      b2.params.adslotId = '2222';
-      b2.params.targeting = { k: '2', x: 'y' };
+      const bid2 = DEFAULT_REQUEST();
+      bid2.bidId = 'BID-2';
+      bid2.params.adslotId = '2222';
+      bid2.params.targeting = { k: '2', x: 'y' };
 
-      const req = spec.buildRequests([b1, b2], { auctionId: 'multi', timeout: 300 });
+      const req = spec.buildRequests([bid1, bid2], { auctionId: 'multi', timeout: 300 });
       const ortb = JSON.parse(req.data);
 
-      const imp1 = ortb.imp.find(i => i.id === b1.bidId);
-      const imp2 = ortb.imp.find(i => i.id === b2.bidId);
+      const imp1 = ortb.imp.find(i => i.id === bid1.bidId);
+      const imp2 = ortb.imp.find(i => i.id === bid2.bidId);
       expect(imp1.tagid).to.equal('1111');
       expect(imp2.tagid).to.equal('2222');
 
