@@ -76,11 +76,11 @@ export const spec = {
         if (!ortb.site.ref) ortb.site.ref = ref;
       }
 
-      applyConsent(ortb, bidderReq);
+      applyConsent(ortb);
 
-      applyEids(ortb, validBidRequests);
+      applyEids(ortb);
 
-      applySchain(ortb, validBidRequests);
+      applySchain(ortb);
 
       applyImps(ortb, validBidRequests);
 
@@ -528,19 +528,14 @@ function applyConsent(ortb) {
 
 /**
  * Apply user EIDs to ORTB.
- * Copies the first adunit’s `userIdAsEids` into `user.eids`.
- * No-op if none present.
+ * Mirrors 2.5 field (user.ext.eids) into 2.6 (user.eids).
  *
  * @param {Object} ortb
- * @param {BidRequest[]} bidRequests
  * @returns {void}
  */
-function applyEids(ortb, bidRequests) {
-  // take the first adunit that has eids
-  const withEids = bidRequests.find(b => Array.isArray(b.userIdAsEids) && b.userIdAsEids.length);
-  if (withEids) {
-    ortb.user = ortb.user || {};
-    ortb.user.eids = withEids.userIdAsEids;
+function applyEids(ortb) {
+  if (ortb.user?.ext?.eids !== undefined) {
+    ortb.user.eids = ortb.user.ext.eids;
   }
 }
 

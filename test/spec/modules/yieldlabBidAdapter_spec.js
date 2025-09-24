@@ -90,7 +90,8 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         refererInfo: { page: 'https://example.test/page', ref: 'https://ref.test/ref' },
         ortb2: {
           ext: { vm: { gp: true, foo: 'bar' } },
-          source: { ext: { schain: bid.schain } }
+          source: { ext: { schain: bid.schain } },
+          user: { ext: { eids: bid.userIdAsEids } }
         }
       };
 
@@ -126,8 +127,9 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(ortb.ext.vm.externalid).to.equal('abc');
       expect(ortb.ext.vm.targeting).to.equal('key1=value1&key2=value2&notDoubleEncoded=value3,value4');
 
-      // user.eids (from adapter) & schain (from FPD/converter)
+      expect(ortb).to.have.nested.property('user.ext.eids').that.is.an('array').with.length(2);
       expect(ortb).to.have.nested.property('user.eids').that.is.an('array').with.length(2);
+
       expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
       expect(ortb).to.have.nested.property('source.schain.ver', '1.0');
     });
