@@ -478,7 +478,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
     });
   });
 
-  describe('applyBidFloors', () => {
+  describe('applies floors (impFn)', () => {
     it('sets bidfloor/bidfloorcur from getFloor (banner)', () => {
       const bid = DEFAULT_REQUEST();
       let lastArgs;

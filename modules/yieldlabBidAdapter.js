@@ -82,10 +82,6 @@ export const spec = {
 
       applySchain(ortb);
 
-      applyImps(ortb, validBidRequests);
-
-      applyBidFloors(ortb, validBidRequests);
-
       applyIabContent(ortb, validBidRequests);
 
       applyVmExt(ortb, validBidRequests, bidderReq);
@@ -129,6 +125,7 @@ export const spec = {
         netRevenue: false,
         ttl: BID_RESPONSE_TTL_SEC
       },
+      imp: impFn,
       request: requestFn,
       bidResponse: bidResponseFn
     });
@@ -504,70 +501,6 @@ function applySchain(ortb) {
 }
 
 /**
- * Apply per-impression fields.
- * For each bidRequest, finds matching `imp` by `id` and sets:
- * - `imp.tagid` from `params.adslotId` (when present).
- * No-op for missing matches.
- *
- * @param {Object} ortb
- * @param {BidRequest[]} bidRequests
- * @returns {void}
- */
-function applyImps(ortb, bidRequests) {
-  const imps = ortb.imp || [];
-  bidRequests.forEach((br) => {
-    const imp = imps.find(i => i && i.id === br.bidId);
-    if (!imp) {
-      return;
-    }
-    // tagid from params.adslotId
-    if (br.params && br.params.adslotId != null) {
-      imp.tagid = br.params.adslotId;
-    }
-  });
-}
-
-/**
- * Apply Price Floors per impression.
- * For each bidRequest with `getFloor()`, finds the matching ORTB `imp` by `id`
- * and sets `imp.bidfloor` (CPM in currency units) and `imp.bidfloorcur`.
- * Uses `derivePrimaryMediaType(bid)` and passes size as a single `[w,h]` when
- * exactly one banner size exists; otherwise uses `'*'`. No-ops when `getFloor`
- * is missing, currencies differ, the floor is non-finite, or no matching `imp`.
- *
- * @param {Object} ortb            OpenRTB request to mutate (`imp[]` is read/updated)
- * @param {BidRequest[]} bidRequests
- * @returns {void}
- */
-function applyBidFloors(ortb, bidRequests) {
-  const imps = ortb.imp || [];
-  bidRequests.forEach((br) => {
-    if (typeof br.getFloor !== 'function') {
-      return;
-    }
-    const imp = imps.find(i => i && i.id === br.bidId);
-    if (!imp) {
-      return;
-    }
-
-    const mediaType = derivePrimaryMediaType(br);
-    const sizes = extractSizePairs(br);
-    const sizeArg = (sizes.length !== 1) ? '*' : sizes[0]; // [w,h] or '*'
-
-    const floor = br.getFloor({
-      currency: CURRENCY_CODE,
-      mediaType: mediaType || '*',
-      size: sizeArg
-    });
-
-    if (floor && floor.currency === CURRENCY_CODE && typeof floor.floor === 'number' && isFinite(floor.floor)) {
-      imp.bidfloor = floor.floor;
-      imp.bidfloorcur = CURRENCY_CODE;
-    }
-  });
-}
-
-/**
  * Merge page-provided IAB content into ORTB's site.content and app.content.
  *
  * - Chooses site.content vs app.content automatically
@@ -697,6 +630,69 @@ function extractSizePairs(bid) {
     }
   });
   return out;
+}
+
+/**
+ * ORTB `imp` customizer for the converter.
+ *
+ * Behavior:
+ * - Copies `params.adslotId` to `imp.tagid` (when present).
+ * - Applies price floors via `applyFloorToImp(imp, bidRequest)`.
+ * - Returns the (possibly) mutated `imp` to the converter.
+ *
+ * @param {Function} buildImp         Base imp builder provided by the converter.
+ * @param {BidRequest} bidRequest     The originating Prebid bidRequest for this imp.
+ * @param {Object} context            Converter context for building the imp.
+ * @returns {Object}                  The finalized OpenRTB `imp` object.
+ */
+function impFn(buildImp, bidRequest, context) {
+  const imp = buildImp(bidRequest, context);
+  const params = bidRequest.params;
+
+  imp.tagid = params.adslotId;
+
+  applyFloorToImp(imp, bidRequest);
+
+  return imp;
+}
+
+/**
+ * Apply Price Floors to a single ORTB `imp`.
+ *
+ * Behavior:
+ * - No-op when `bidRequest.getFloor` is missing.
+ * - Uses `derivePrimaryMediaType(bidRequest)` to select the mediaType (defaults to `'*'`).
+ * - For banner: if exactly one size exists, passes `[w, h]`; otherwise passes `'*'`.
+ *   For video: always passes `'*'`.
+ * - Calls `getFloor({ currency: CURRENCY_CODE, mediaType, size })`.
+ * - Sets `imp.bidfloor` and `imp.bidfloorcur` when currency matches and floor is finite.
+ *
+ * @param {Object} imp                OpenRTB impression object to mutate.
+ * @param {BidRequest} bidRequest     The originating Prebid bidRequest.
+ * @returns {void}
+ */
+function applyFloorToImp(imp, bidRequest) {
+  if (typeof bidRequest.getFloor !== 'function') return;
+
+  const mediaType = derivePrimaryMediaType(bidRequest) || '*';
+
+  // size param: single banner size -> [w,h]; otherwise '*'. For video always '*'.
+  let sizeArg = '*';
+  if (mediaType !== 'video') {
+    const sizes = extractSizePairs(bidRequest);
+    if (sizes.length === 1) sizeArg = sizes[0];
+  }
+
+  const floor = bidRequest.getFloor({
+    currency: CURRENCY_CODE,
+    mediaType,
+    size: sizeArg
+  });
+
+  if (floor && floor.currency === CURRENCY_CODE && Number.isFinite(floor.floor)) {
+    imp.bidfloor = floor.floor;
+    imp.bidfloorcur = CURRENCY_CODE;
+  }
 }
 
 registerBidder(spec);
