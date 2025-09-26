@@ -103,7 +103,6 @@ export const spec = {
 
       const resp = buildBidResponse(bid, ctx);
 
-      ensureCreativeId(resp, bid, ctx);
       sanitizeVideoAsset(resp);
       ensureBannerSize(resp, ctx);
 
@@ -293,21 +292,6 @@ function mergeKeyValues(bidRequests) {
     }
     return acc;
   }, {});
-}
-
-/**
- * Ensure creativeId and dealId presence on the PBJS response.
- * @param {Bid} resp
- * @param {Object} bid
- * @param {Object} ctx
- */
-function ensureCreativeId(resp, bid, ctx) {
-  if (!resp.creativeId) {
-    resp.creativeId = bid.crid || bid.adid || bid.id || bid.impid || ('yl-' + ctx.bidRequest.bidId);
-  }
-  if (!resp.dealId && bid.dealid) {
-    resp.dealId = bid.dealid;
-  }
 }
 
 /**

@@ -252,8 +252,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
               impid: ortbReq.imp[0].id,
               price: 1.23,
               adm: '<div>banner creative</div>',
-              // omit crid to exercise creativeId fallback via id
-              id: 'srv-1',
+              crid: 'srv-1',
               dealid: 'deal-42',
               adomain: ['yieldlab']
             }]
@@ -270,8 +269,8 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(bidResponse.cpm).to.equal(1.23);
       expect(bidResponse.width).to.equal(728);
       expect(bidResponse.height).to.equal(90);
-      expect(bidResponse.creativeId).to.equal('srv-1'); // fallback chain (id)
-      expect(bidResponse.dealId).to.equal('deal-42'); // mapped from dealid
+      expect(bidResponse.creativeId).to.equal('srv-1');
+      expect(bidResponse.dealId).to.equal('deal-42');
       expect(bidResponse.currency).to.equal('EUR');
       expect(bidResponse.netRevenue).to.equal(false);
       expect(bidResponse.ttl).to.equal(300);
