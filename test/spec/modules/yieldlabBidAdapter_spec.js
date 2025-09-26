@@ -2,6 +2,17 @@ import { expect } from 'chai';
 import { spec } from 'modules/yieldlabBidAdapter.js';
 import { newBidder } from 'src/adapters/bidderFactory.js';
 
+import 'src/prebid.js';
+import 'modules/currency.js';
+import 'modules/userId/index.js';
+import 'modules/multibid/index.js';
+import 'modules/priceFloors.js';
+import 'modules/consentManagementTcf.js';
+import 'modules/consentManagementUsp.js';
+import 'modules/paapi.js';
+
+import { hook } from 'src/hook.js';
+
 const DEFAULT_REQUEST = () => ({
   bidder: 'yieldlab',
   params: {
@@ -62,6 +73,10 @@ const NATIVE_REQUEST = () => ({
 });
 
 describe('yieldlabBidAdapter (ORTB)', () => {
+  before(() => {
+    hook.ready();
+  });
+
   describe('instantiation', () => {
     it('creates a bidder instance', () => {
       const bidder = newBidder(spec);

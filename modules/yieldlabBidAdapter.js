@@ -660,6 +660,7 @@ function impFn(buildImp, bidRequest, context) {
  * Apply Price Floors to a single ORTB `imp`.
  *
  * Behavior:
+ * - Clears any previously set imp.bidfloor/bidfloorcur (e.g., from default processors).
  * - No-op when `bidRequest.getFloor` is missing.
  * - Uses `derivePrimaryMediaType(bidRequest)` to select the mediaType (defaults to `'*'`).
  * - For banner: if exactly one size exists, passes `[w, h]`; otherwise passes `'*'`.
@@ -673,6 +674,13 @@ function impFn(buildImp, bidRequest, context) {
  */
 function applyFloorToImp(imp, bidRequest) {
   if (typeof bidRequest.getFloor !== 'function') return;
+
+  if ('bidfloor' in imp) {
+    delete imp.bidfloor;
+  }
+  if ('bidfloorcur' in imp) {
+    delete imp.bidfloorcur;
+  }
 
   const mediaType = derivePrimaryMediaType(bidRequest) || '*';
 
