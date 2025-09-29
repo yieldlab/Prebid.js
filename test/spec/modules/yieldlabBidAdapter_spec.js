@@ -469,6 +469,41 @@ describe('yieldlabBidAdapter (ORTB)', () => {
     });
   });
 
+  describe('applyNetRevenue', () => {
+    it('sets bidResponse.netRevenue from bid.ext.netrevenue (true)', () => {
+      const bid = DEFAULT_REQUEST();
+      const req = spec.buildRequests([bid], { auctionId: 'nr-1', timeout: 300 });
+      const ortbReq = JSON.parse(req.data);
+
+      const serverResponse = {
+        body: {
+          id: 'nr-1',
+          seatbid: [{
+            bid: [{
+              impid: ortbReq.imp[0].id,
+              price: 0.42,
+              adm: '<div>banner creative</div>',
+              crid: 'cr-1',
+              adomain: ['yieldlab'],
+              ext: { netrevenue: true }
+            }]
+          }],
+          cur: 'EUR'
+        }
+      };
+
+      const res = spec.interpretResponse(serverResponse, req);
+      expect(res).to.have.length(1);
+      const br = res[0];
+
+      expect(br.mediaType).to.equal('banner');
+      expect(br.netRevenue).to.equal(true);
+      expect(br.cpm).to.equal(0.42);
+      expect(br.creativeId).to.equal('cr-1');
+      expect(br.currency).to.equal('EUR');
+    });
+  });
+
   describe('getUserSyncs', () => {
     const syncOptions = { iframeEnabled: true, pixelEnabled: false };
 

@@ -103,6 +103,7 @@ export const spec = {
 
       const resp = buildBidResponse(bid, ctx);
 
+      applyNetRevenue(resp, bid)
       sanitizeVideoAsset(resp);
       ensureBannerSize(resp, ctx);
 
@@ -121,7 +122,6 @@ export const spec = {
     const converter = ortbConverter({
       context: {
         currency: CURRENCY_CODE,
-        netRevenue: false,
         ttl: BID_RESPONSE_TTL_SEC
       },
       imp: impFn,
@@ -685,6 +685,18 @@ function applyFloorToImp(imp, bidRequest) {
     imp.bidfloor = floor.floor;
     imp.bidfloorcur = CURRENCY_CODE;
   }
+}
+
+/**
+ * Apply `netRevenue` from the bid response `seatbid[].bid[].ext.netRevenue`.
+ *
+ * @param {Bid} resp  bid response to mutate
+ * @param {Object} bid  - Raw ORTB bid (seatbid.bid[i])
+ * @returns {void}
+ */
+function applyNetRevenue(resp, bid) {
+  const netRevenue = deepAccess(bid, 'ext.netrevenue');
+  resp.netRevenue = netRevenue !== undefined ? netRevenue : false;
 }
 
 registerBidder(spec);
