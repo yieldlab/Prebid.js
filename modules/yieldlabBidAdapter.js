@@ -112,8 +112,6 @@ export const spec = {
         installOutstreamRendererIfNeeded(resp, ctx);
       }
 
-      attachNativeFromAdm(resp, bid);
-
       ensureMeta(resp, bid);
 
       return resp;
@@ -337,53 +335,6 @@ function unwrapNativeAdm(body) {
       }
     });
   });
-}
-
-/**
- * Populate "resp.native" from an ORTB Native "adm" JSON string when the converter
- * didn’t already build a Prebid Native object.
- *
- * Handles both:
- *   - adm: {"native": {...}}
- *   - adm: {...}
- *
- * Sets:
- *   - resp.native.clickUrl
- *   - resp.native.impressionTrackers
- *   - resp.native.assets
- *   - resp.native.ortb  (raw parsed object for debugging/passthrough)
- *
- * Silently no-ops on malformed JSON or non-native payloads.
- *
- * @param {Object} resp - Prebid bid response being built
- * @param {Object} bid  - Raw ORTB bid (seatbid.bid[i])
- */
-function attachNativeFromAdm(resp, bid) {
-  if (resp.mediaType !== NATIVE || resp.native || typeof bid.adm !== 'string') {
-    return;
-  }
-
-  try {
-    const parsed = JSON.parse(bid.adm);
-    const n = (parsed && typeof parsed === 'object' && parsed.native) ? parsed.native : parsed;
-    if (!n || typeof n !== 'object') {
-      return;
-    }
-
-    const assets = Array.isArray(n.assets) ? n.assets : [];
-    const imptrackers = Array.isArray(n.imptrackers) ? n.imptrackers : [];
-
-    // Only attach if it looks like a native payload
-    if (assets.length || n.link || imptrackers.length) {
-      resp.native = {
-        clickUrl: n.link?.url,
-        impressionTrackers: imptrackers,
-        assets,
-        ortb: n
-      };
-    }
-  } catch { /* ignore */
-  }
 }
 
 /**

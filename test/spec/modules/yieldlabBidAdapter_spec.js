@@ -409,64 +409,66 @@ describe('yieldlabBidAdapter (ORTB)', () => {
   });
 
   describe('interpretResponse (native)', () => {
-    it('keeps native assets and trackers', () => {
-      const bid = NATIVE_REQUEST();
-      const req = spec.buildRequests([bid], { auctionId: 'a' });
-      const ortbReq = JSON.parse(req.data);
+    if (FEATURES.NATIVE) {
+      it('keeps native assets and trackers', () => {
+        const bid = NATIVE_REQUEST();
+        const req = spec.buildRequests([bid], { auctionId: 'a' });
+        const ortbReq = JSON.parse(req.data);
 
-      const nativeAdm = JSON.stringify({
-        native: {
-          link: { url: 'https://www.yieldlab.de' },
-          assets: [
-            { id: 1, title: { text: 'This is a great headline' } },
-            { id: 2, img: { url: 'https://ad.yieldlab.net/yl-logo100x100.jpg', w: 100, h: 100 } },
-            { id: 3, data: { value: 'Native body value' } },
-            { id: 4, img: { url: 'https://ad.yieldlab.net/assets/favicon/favicon-16x16.png', w: 16, h: 16 } }
-          ],
-          imptrackers: ['https://tracker/1', 'https://tracker/2']
-        }
+        const nativeAdm = JSON.stringify({
+          native: {
+            link: { url: 'https://www.yieldlab.de' },
+            assets: [
+              { id: 1, title: { text: 'This is a great headline' } },
+              { id: 2, img: { url: 'https://ad.yieldlab.net/yl-logo100x100.jpg', w: 100, h: 100 } },
+              { id: 3, data: { value: 'Native body value' } },
+              { id: 4, img: { url: 'https://ad.yieldlab.net/assets/favicon/favicon-16x16.png', w: 16, h: 16 } }
+            ],
+            imptrackers: ['https://tracker/1', 'https://tracker/2']
+          }
+        });
+
+        const serverResponse = {
+          body: {
+            id: 'a',
+            seatbid: [{
+              bid: [{
+                impid: ortbReq.imp[0].id,
+                price: 0.9,
+                adm: nativeAdm,
+                adomain: ['yieldlab'],
+                crid: 'n-1'
+              }]
+            }],
+            cur: 'EUR'
+          }
+        };
+
+        const res = spec.interpretResponse(serverResponse, req);
+        expect(res).to.have.length(1);
+        const bidResponse = res[0];
+
+        expect(bidResponse.mediaType).to.equal('native');
+
+        const nativeResponse = bidResponse.native.ortb;
+        expect(nativeResponse).to.have.property('assets').that.is.an('array').with.length.greaterThan(0);
+
+        const assetResponseTitle = nativeResponse.assets.find(a => a.title && a.title.text);
+        const assetResponseData = nativeResponse.assets.find(a => a.data && typeof a.data.value === 'string');
+        const assetResponseImages = nativeResponse.assets.filter(a => a.img && a.img.url);
+
+        expect(assetResponseTitle?.title.text).to.equal('This is a great headline');
+        expect(assetResponseData?.data.value).to.equal('Native body value');
+
+        const hasLogo = assetResponseImages.some(i => i.img.url.includes('yl-logo100x100.jpg') && i.img.w === 100 && i.img.h === 100);
+        const hasFavicon = assetResponseImages.some(i => i.img.url.includes('favicon-16x16.png') && i.img.w === 16 && i.img.h === 16);
+        expect(hasLogo).to.equal(true);
+        expect(hasFavicon).to.equal(true);
+
+        expect(nativeResponse.imptrackers).to.deep.equal(['https://tracker/1', 'https://tracker/2']);
+        expect(nativeResponse.link?.url).to.equal('https://www.yieldlab.de');
       });
-
-      const serverResponse = {
-        body: {
-          id: 'a',
-          seatbid: [{
-            bid: [{
-              impid: ortbReq.imp[0].id,
-              price: 0.9,
-              adm: nativeAdm,
-              adomain: ['yieldlab'],
-              crid: 'n-1'
-            }]
-          }],
-          cur: 'EUR'
-        }
-      };
-
-      const res = spec.interpretResponse(serverResponse, req);
-      expect(res).to.have.length(1);
-      const bidResponse = res[0];
-
-      expect(bidResponse.mediaType).to.equal('native');
-
-      const nativeResponse = bidResponse.native.ortb;
-      expect(nativeResponse).to.have.property('assets').that.is.an('array').with.length.greaterThan(0);
-
-      const assetResponseTitle = nativeResponse.assets.find(a => a.title && a.title.text);
-      const assetResponseData = nativeResponse.assets.find(a => a.data && typeof a.data.value === 'string');
-      const assetResponseImages = nativeResponse.assets.filter(a => a.img && a.img.url);
-
-      expect(assetResponseTitle?.title.text).to.equal('This is a great headline');
-      expect(assetResponseData?.data.value).to.equal('Native body value');
-
-      const hasLogo = assetResponseImages.some(i => i.img.url.includes('yl-logo100x100.jpg') && i.img.w === 100 && i.img.h === 100);
-      const hasFavicon = assetResponseImages.some(i => i.img.url.includes('favicon-16x16.png') && i.img.w === 16 && i.img.h === 16);
-      expect(hasLogo).to.equal(true);
-      expect(hasFavicon).to.equal(true);
-
-      expect(nativeResponse.imptrackers).to.deep.equal(['https://tracker/1', 'https://tracker/2']);
-      expect(nativeResponse.link?.url).to.equal('https://www.yieldlab.de');
-    });
+    }
   });
 
   describe('applyNetRevenue', () => {
