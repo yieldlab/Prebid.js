@@ -1,7 +1,7 @@
 import { registerBidder } from '../src/adapters/bidderFactory.js';
-import { BANNER, NATIVE, VIDEO } from '../src/mediaTypes.js';
+import { ALL_MEDIATYPES, BANNER, NATIVE, VIDEO } from '../src/mediaTypes.js';
 import { Renderer } from '../src/Renderer.js';
-import { deepAccess, isArray, timestamp } from '../src/utils.js';
+import { deepAccess, isArray, logWarn, timestamp } from '../src/utils.js';
 import { ortbConverter } from '../libraries/ortbConverter/converter.js';
 
 /**
@@ -103,7 +103,7 @@ export const spec = {
 
       const resp = buildBidResponse(bid, ctx);
 
-      applyNetRevenue(resp, bid)
+      applyNetRevenue(resp, bid);
       sanitizeVideoAsset(resp);
       ensureBannerSize(resp, ctx);
 
@@ -128,6 +128,15 @@ export const spec = {
     });
 
     const ortbRequest = converter.toORTB({ bidderRequest, bidRequests: validBidRequests });
+
+    // The converter skips any imp it fails to build, so an otherwise valid looking
+    // request can end up with no impressions at all. Sending that would be an
+    // invalid ORTB request, so drop out of the auction instead.
+    if (!ortbRequest?.imp?.length) {
+      logWarn('yieldlab: no impressions could be built, skipping request');
+      return [];
+    }
+
     const url = `${ENDPOINT}${ORTB_PATH}`;
 
     return {
@@ -592,11 +601,43 @@ function impFn(buildImp, bidRequest, context) {
 }
 
 /**
+ * Remove non-EUR granular floors from an ORTB `imp`.
+ *
+ * The price floors module writes per-mediatype and per-format floors as
+ * `ext.bidfloor`/`ext.bidfloorcur` on `imp[mediaType]` and on every
+ * `imp.banner.format[]` entry whenever they differ from the top level pair.
+ * Those copies are not covered by deleting `imp.bidfloor`, so a non-EUR floor
+ * would otherwise still travel in a request that only transacts in EUR.
+ * Floors already denominated in EUR are left alone - they may have been set
+ * deliberately by the publisher through `ortb2Imp`.
+ *
+ * @param {Object} imp  OpenRTB impression object to mutate.
+ * @returns {void}
+ */
+function stripForeignGranularFloors(imp) {
+  const holders = ALL_MEDIATYPES.map((mediaType) => imp[mediaType]).concat(imp.banner?.format || []);
+
+  holders.forEach((holder) => {
+    const ext = holder && holder.ext;
+    if (!ext || ext.bidfloorcur === CURRENCY_CODE) {
+      return;
+    }
+    delete ext.bidfloor;
+    delete ext.bidfloorcur;
+    if (Object.keys(ext).length === 0) {
+      delete holder.ext;
+    }
+  });
+}
+
+/**
  * Apply Price Floors to a single ORTB `imp`.
  *
  * Behavior:
  * - Clears any previously set imp.bidfloor/bidfloorcur (e.g., from default processors).
+ * - Clears non-EUR granular floors left on the imp by the price floors module.
  * - No-op when `bidRequest.getFloor` is missing.
+ * - Leaves the imp unfloored when `getFloor` throws, rather than losing the imp.
  * - Uses `derivePrimaryMediaType(bidRequest)` to select the mediaType (defaults to `'*'`).
  * - For banner: if exactly one size exists, passes `[w, h]`; otherwise passes `'*'`.
  *   For video: always passes `'*'`.
@@ -617,6 +658,8 @@ function applyFloorToImp(imp, bidRequest) {
     delete imp.bidfloorcur;
   }
 
+  stripForeignGranularFloors(imp);
+
   const mediaType = derivePrimaryMediaType(bidRequest) || '*';
 
   // size param: single banner size -> [w,h]; otherwise '*'. For video always '*'.
@@ -626,11 +669,19 @@ function applyFloorToImp(imp, bidRequest) {
     if (sizes.length === 1) sizeArg = sizes[0];
   }
 
-  const floor = bidRequest.getFloor({
-    currency: CURRENCY_CODE,
-    mediaType,
-    size: sizeArg
-  });
+  let floor;
+  try {
+    floor = bidRequest.getFloor({
+      currency: CURRENCY_CODE,
+      mediaType,
+      size: sizeArg
+    });
+  } catch (e) {
+    // Publisher supplied floor code can throw; core's own tryGetFloor swallows it
+    // too. Bid without a floor instead of letting the imp be dropped.
+    logWarn('yieldlab: unable to compute floor for bid', bidRequest, e);
+    return;
+  }
 
   if (floor && floor.currency === CURRENCY_CODE && Number.isFinite(floor.floor)) {
     imp.bidfloor = floor.floor;
