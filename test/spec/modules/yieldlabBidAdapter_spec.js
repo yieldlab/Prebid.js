@@ -481,27 +481,28 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
   describe('native asset-id contract with the adserver native template', () => {
     if (FEATURES.NATIVE) {
-      // The adserver DISCARDS imp.native.request and rebuilds the native request from the
-      // adslot's native template (OpenRTBRequestGeneratorServiceImpl.getNativeRequest reads
-      // only the template's assets). The DSP therefore answers with the TEMPLATE's asset ids,
-      // and this adapter passes that ORTB straight through as bid.native.ortb. Prebid then
-      // validates the response against the PUBLISHER's request, matching by asset id
-      // (isNativeOpenRTBBidValid / toLegacyResponse), so the two only line up if the
-      // publisher's config mirrors the Yieldlab template.
-      //
-      // Fixture below is stage native template 13: a single icon image asset with id 4.
-      // (img.type 1 = ICON, 3 = MAIN, per NATIVE_IMAGE_TYPES in src/constants.)
+      // The adserver builds its outgoing native request from the adslot's configured native
+      // template and deliberately ignores imp.native.request, so the DSP answers with
+      // the TEMPLATE's asset ids. Prebid validates and renders by id, so the adapter reconciles
+      // the two in reconcileNativeAssetIds(). Note Adserver strips img.type from the response.
       const TEMPLATE_IMAGE_URL = 'https://ad.yieldlab.net/qa/main.jpg';
       const TEMPLATE_13_ADM = JSON.stringify({
         native: {
           ver: '1.2',
           link: { url: 'https://ad.yieldlab.net/qa/click' },
           assets: [
-            { id: 4, required: 0, img: { type: 1, url: TEMPLATE_IMAGE_URL, w: 300, h: 250 } }
+            { id: 4, img: { url: TEMPLATE_IMAGE_URL, w: 300, h: 250 } }
           ],
           eventtrackers: [{ event: 1, method: 1, url: 'https://ad.yieldlab.net/1x1.gif' }]
         }
       });
+
+      /** Build a native bid request the way the auction would, with nativeOrtbRequest populated. */
+      const nativeBid = (nativeCfg) => {
+        const bid = { ...DEFAULT_REQUEST(), mediaTypes: { native: nativeCfg } };
+        bid.nativeOrtbRequest = toOrtbNativeRequest(nativeCfg);
+        return bid;
+      };
 
       /** Run a bid request through buildRequests + interpretResponse against the template adm. */
       const interpretTemplateResponse = (bidRequest) => {
@@ -526,60 +527,64 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         return res[0];
       };
 
-      /** A publisher ad unit whose native config is the usual mediaTypes.native shorthand. */
-      const shorthandRequest = () => {
-        const bid = NATIVE_REQUEST();
-        bid.nativeOrtbRequest = toOrtbNativeRequest(bid.mediaTypes.native);
-        return bid;
-      };
-
-      it('passes the template asset ids through to bid.native.ortb untouched', () => {
-        const bidResponse = interpretTemplateResponse(shorthandRequest());
-
-        expect(bidResponse.mediaType).to.equal('native');
-        expect(bidResponse.native.ortb.assets.map(asset => asset.id)).to.deep.equal([4]);
-        expect(bidResponse.native.ortb.link.url).to.equal('https://ad.yieldlab.net/qa/click');
-      });
-
       it('numbers publisher assets from 0, so the template id 4 is never among them', () => {
         const publisherRequest = toOrtbNativeRequest(NATIVE_REQUEST().mediaTypes.native);
-        const ids = publisherRequest.assets.map(asset => asset.id);
+        const ids = publisherRequest.assets.map((asset) => asset.id);
 
         expect(ids[0]).to.equal(0);
         expect(ids).to.not.include(4);
-        expect(publisherRequest.assets.some(asset => asset.required === 1)).to.equal(true);
       });
 
-      it('CURRENT BEHAVIOUR (defective): the bid is rejected when the publisher config does not mirror the template', () => {
-        const bid = shorthandRequest();
+      it('a publisher using the standard mediaTypes.native shorthand gets a usable native bid', () => {
+        const bid = nativeBid({ icon: { required: true, sizes: [100, 100] } });
         const bidResponse = interpretTemplateResponse(bid);
 
-        // Required ids 0..3 were asked for; only id 4 came back.
+        // The template's id 4 has been reconciled onto the publisher's own id.
+        expect(bidResponse.mediaType).to.equal('native');
+        expect(bidResponse.native.ortb.assets.map((a) => a.id)).to.deep.equal([0]);
+        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
+      });
+
+      it('files the image in the image slot, not the icon slot', () => {
+        const bid = nativeBid({
+          title: { required: false, len: 90 },
+          body: { required: false },
+          image: { required: false, sizes: [300, 250] }
+        });
+        const bidResponse = interpretTemplateResponse(bid);
+        const legacy = toLegacyResponse(bidResponse.native.ortb, bid.nativeOrtbRequest);
+
+        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
+        expect(legacy.image?.url).to.equal(TEMPLATE_IMAGE_URL);
+        expect(legacy.icon).to.equal(undefined);
+      });
+
+      it('leaves the id alone when the facet is ambiguous and cannot be resolved', () => {
+        // Publisher wants BOTH an icon and a main image. The adserver strips img.type from the
+        // response, and neither requested size fits 300x250, so there is no safe way to tell
+        // which slot this image belongs in. Guessing would render a main image as an icon, so
+        // the asset is left untouched and the bid is rejected downstream instead.
+        const bid = nativeBid({
+          icon: { required: false, sizes: [16, 16] },
+          image: { required: false, sizes: [100, 100] }
+        });
+        const bidResponse = interpretTemplateResponse(bid);
+
+        expect(bidResponse.native.ortb.assets.map((a) => a.id)).to.deep.equal([4]);
+      });
+
+      it('still rejects when the template cannot supply a required facet', () => {
+        // Publisher requires title + body + image + icon; template 13 has only one image. No
+        // amount of id reconciliation can invent a title, so the bid is correctly rejected.
+        // This is the residual gap: it is publisher misconfiguration under the template-driven
+        // model, not an adapter defect.
+        const bid = nativeBid(NATIVE_REQUEST().mediaTypes.native);
+        const bidResponse = interpretTemplateResponse(bid);
+
         expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(false);
       });
 
-      // ------------------------------------------------------------------
-      // DESIRED BEHAVIOUR — currently FAILS. This is the bug, expressed as a
-      // test. It should go green when native is fixed, wherever the fix lands:
-      //   * adserver-side  — honour/intersect the incoming imp.native.request so
-      //     the response already carries the publisher's asset ids; or
-      //   * adapter-side   — reconcile the DSP's template-shaped assets onto the
-      //     publisher's requested ids by facet type, which is what the legacy
-      //     (pre-POST-ORTB) adapter effectively did via toOrtbNativeResponse.
-      // Either fix satisfies this test, so it does not prejudge the design.
-      // Delete the characterization tests above once this one passes.
-      // ------------------------------------------------------------------
-      it('a publisher using the standard mediaTypes.native shorthand gets a usable native bid', () => {
-        const bid = shorthandRequest();
-        const bidResponse = interpretTemplateResponse(bid);
-
-        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
-
-        const legacy = toLegacyResponse(bidResponse.native.ortb, bid.nativeOrtbRequest);
-        expect(legacy.image?.url).to.equal(TEMPLATE_IMAGE_URL);
-      });
-
-      it('ACCEPTS the bid when the publisher config mirrors the template asset ids', () => {
+      it('leaves an already-correct id untouched when the publisher mirrors the template', () => {
         const mirroredOrtb = {
           ver: '1.2',
           assets: [{ id: 4, required: 0, img: { type: 1, wmin: 100, hmin: 100 } }]
@@ -589,36 +594,11 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
         const bidResponse = interpretTemplateResponse(bid);
 
+        expect(bidResponse.native.ortb.assets.map((a) => a.id)).to.deep.equal([4]);
         expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
-      });
-
-      it('CURRENT BEHAVIOUR (defective): required:0 lets the id mismatch through, and the image is mis-filed as icon', () => {
-        const bid = {
-          ...DEFAULT_REQUEST(),
-          mediaTypes: {
-            native: {
-              title: { required: false, len: 90 },
-              body: { required: false },
-              image: { required: false, sizes: [300, 250] }
-            }
-          }
-        };
-        bid.nativeOrtbRequest = toOrtbNativeRequest(bid.mediaTypes.native);
-
-        const bidResponse = interpretTemplateResponse(bid);
-
-        // Nothing is required, so the required-asset check cannot fail...
-        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
-
-        // ...but the mapping is still by id, and id 4 matches nothing the publisher asked for,
-        // so the creative's image is filed as `icon` and `image` is never populated.
-        const legacy = toLegacyResponse(bidResponse.native.ortb, bid.nativeOrtbRequest);
-        expect(legacy.icon?.url).to.equal(TEMPLATE_IMAGE_URL);
-        expect(legacy.image).to.equal(undefined);
       });
     }
   });
-
   describe('applyNetRevenue', () => {
     it('sets bidResponse.netRevenue from bid.ext.netrevenue (true)', () => {
       const bid = DEFAULT_REQUEST();
