@@ -106,6 +106,7 @@ export const spec = {
       applyNetRevenue(resp, bid);
       sanitizeVideoAsset(resp);
       ensureBannerSize(resp, ctx);
+      reconcileNativeAssetIds(resp, ctx);
 
       if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
         setVideoSize(resp, ctx);
@@ -324,6 +325,119 @@ function ensureMeta(resp, bid) {
  * Also hints "mtype" to native when appropriate.
  * @param {Object} body ORTB response body
  */
+/**
+ * Returns which native facet an asset carries, or undefined.
+ *
+ * @param {Object} asset  a native request or response asset
+ * @returns {'title'|'img'|'data'|'video'|undefined}
+ */
+function nativeFacetOf(asset) {
+  if (!asset) return undefined;
+  if (asset.title) return 'title';
+  if (asset.img) return 'img';
+  if (asset.data) return 'data';
+  if (asset.video) return 'video';
+  return undefined;
+}
+
+/**
+ * Pick the requested image asset a response image best fits, by dimension.
+ *
+ * Only used to break a tie between several candidate image assets. Returns
+ * undefined unless there is a single unambiguous winner - guessing wrong files a
+ * main image into an icon slot, which is worse than leaving the asset alone.
+ *
+ * @param {Object[]} candidates  unused requested assets carrying an `img`
+ * @param {Object} img           the response image object
+ * @returns {Object|undefined}
+ */
+function bestImageFit(candidates, img) {
+  if (img.w == null || img.h == null) return undefined;
+  const scored = candidates
+    .map((candidate) => {
+      const spec = candidate.img || {};
+      if (spec.w != null && spec.h != null) {
+        return { candidate, score: (spec.w === img.w && spec.h === img.h) ? 0 : null };
+      }
+      const wmin = spec.wmin || 0;
+      const hmin = spec.hmin || 0;
+      if (img.w < wmin || img.h < hmin) return { candidate, score: null };
+      return { candidate, score: (img.w - wmin) + (img.h - hmin) };
+    })
+    .filter((entry) => entry.score !== null)
+    .sort((a, b) => a.score - b.score);
+
+  if (!scored.length) return undefined;
+  if (scored.length > 1 && scored[0].score === scored[1].score) return undefined;
+  return scored[0].candidate;
+}
+
+/**
+ * Rewrite the DSP's native asset ids onto the ids the publisher asked for.
+ *
+ * The adserver builds its outgoing native request from the adslot's configured
+ * native template and deliberately ignores `imp.native.request` (YL-6463), so the
+ * response comes back carrying the TEMPLATE's asset ids. Prebid then validates and
+ * renders that response against the ids IT sent - `isNativeOpenRTBBidValid` and
+ * `toLegacyResponse` both match by id - so without this step every native bid is
+ * discarded client-side. The legacy adapter avoided the problem by emitting legacy
+ * keys, which routed through `toOrtbNativeResponse` and re-stamped the publisher's
+ * ids; this restores that behaviour for the ORTB path.
+ *
+ * Matching is by facet (title / img / data / video), preferring an exact sub-type
+ * match where the response provides one. Note the adserver currently strips
+ * `img.type` from response assets, so icon-vs-main-image is usually decided by the
+ * dimension fit above, and is left untouched when it cannot be resolved.
+ *
+ * @param {Bid} resp   bid response to mutate
+ * @param {Object} ctx converter context; `ctx.bidRequest.nativeOrtbRequest` is read
+ * @returns {void}
+ */
+function reconcileNativeAssetIds(resp, ctx) {
+  if (resp?.mediaType !== NATIVE) return;
+
+  const requested = deepAccess(ctx, 'bidRequest.nativeOrtbRequest.assets');
+  const responseAssets = deepAccess(resp, 'native.ortb.assets');
+  if (!Array.isArray(requested) || !requested.length) return;
+  if (!Array.isArray(responseAssets) || !responseAssets.length) return;
+
+  const claimed = new Set();
+
+  responseAssets.forEach((asset) => {
+    const facet = nativeFacetOf(asset);
+    if (!facet) return;
+
+    // Already addressed to an asset the publisher asked for - leave it be.
+    const exact = requested.find((r) => r.id === asset.id && nativeFacetOf(r) === facet);
+    if (exact) {
+      claimed.add(exact.id);
+      return;
+    }
+
+    const candidates = requested.filter(
+      (r) => nativeFacetOf(r) === facet && !claimed.has(r.id)
+    );
+    if (!candidates.length) return;
+
+    const subType = facet === 'img' ? asset.img.type : (facet === 'data' ? asset.data.type : undefined);
+
+    let match;
+    if (subType != null) {
+      match = candidates.find((c) => (facet === 'img' ? c.img : c.data)?.type === subType);
+    }
+    if (!match && candidates.length === 1) {
+      match = candidates[0];
+    }
+    if (!match && facet === 'img') {
+      match = bestImageFit(candidates, asset.img);
+    }
+    if (!match) return; // ambiguous - do not guess
+
+    claimed.add(match.id);
+    asset.id = match.id;
+  });
+}
+
 function unwrapNativeAdm(body) {
   (body.seatbid || []).forEach((seat) => {
     (seat.bid || []).forEach((b) => {
