@@ -1,7 +1,7 @@
 import { registerBidder } from '../src/adapters/bidderFactory.js';
-import { BANNER, NATIVE, VIDEO } from '../src/mediaTypes.js';
+import { ALL_MEDIATYPES, BANNER, NATIVE, VIDEO } from '../src/mediaTypes.js';
 import { Renderer } from '../src/Renderer.js';
-import { deepAccess, isArray, timestamp } from '../src/utils.js';
+import { deepAccess, isArray, logWarn, timestamp } from '../src/utils.js';
 import { ortbConverter } from '../libraries/ortbConverter/converter.js';
 
 /**
@@ -103,9 +103,10 @@ export const spec = {
 
       const resp = buildBidResponse(bid, ctx);
 
-      applyNetRevenue(resp, bid)
+      applyNetRevenue(resp, bid);
       sanitizeVideoAsset(resp);
       ensureBannerSize(resp, ctx);
+      reconcileNativeAssetIds(resp, ctx);
 
       if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
         setVideoSize(resp, ctx);
@@ -128,6 +129,15 @@ export const spec = {
     });
 
     const ortbRequest = converter.toORTB({ bidderRequest, bidRequests: validBidRequests });
+
+    // The converter skips any imp it fails to build, so an otherwise valid looking
+    // request can end up with no impressions at all. Sending that would be an
+    // invalid ORTB request, so drop out of the auction instead.
+    if (!ortbRequest?.imp?.length) {
+      logWarn('yieldlab: no impressions could be built, skipping request');
+      return [];
+    }
+
     const url = `${ENDPOINT}${ORTB_PATH}`;
 
     return {
@@ -315,6 +325,119 @@ function ensureMeta(resp, bid) {
  * Also hints "mtype" to native when appropriate.
  * @param {Object} body ORTB response body
  */
+/**
+ * Returns which native facet an asset carries, or undefined.
+ *
+ * @param {Object} asset  a native request or response asset
+ * @returns {'title'|'img'|'data'|'video'|undefined}
+ */
+function nativeFacetOf(asset) {
+  if (!asset) return undefined;
+  if (asset.title) return 'title';
+  if (asset.img) return 'img';
+  if (asset.data) return 'data';
+  if (asset.video) return 'video';
+  return undefined;
+}
+
+/**
+ * Pick the requested image asset a response image best fits, by dimension.
+ *
+ * Only used to break a tie between several candidate image assets. Returns
+ * undefined unless there is a single unambiguous winner - guessing wrong files a
+ * main image into an icon slot, which is worse than leaving the asset alone.
+ *
+ * @param {Object[]} candidates  unused requested assets carrying an `img`
+ * @param {Object} img           the response image object
+ * @returns {Object|undefined}
+ */
+function bestImageFit(candidates, img) {
+  if (img.w == null || img.h == null) return undefined;
+  const scored = candidates
+    .map((candidate) => {
+      const spec = candidate.img || {};
+      if (spec.w != null && spec.h != null) {
+        return { candidate, score: (spec.w === img.w && spec.h === img.h) ? 0 : null };
+      }
+      const wmin = spec.wmin || 0;
+      const hmin = spec.hmin || 0;
+      if (img.w < wmin || img.h < hmin) return { candidate, score: null };
+      return { candidate, score: (img.w - wmin) + (img.h - hmin) };
+    })
+    .filter((entry) => entry.score !== null)
+    .sort((a, b) => a.score - b.score);
+
+  if (!scored.length) return undefined;
+  if (scored.length > 1 && scored[0].score === scored[1].score) return undefined;
+  return scored[0].candidate;
+}
+
+/**
+ * Rewrite the DSP's native asset ids onto the ids the publisher asked for.
+ *
+ * The adserver builds its outgoing native request from the adslot's configured
+ * native template and deliberately ignores `imp.native.request` (YL-6463), so the
+ * response comes back carrying the TEMPLATE's asset ids. Prebid then validates and
+ * renders that response against the ids IT sent - `isNativeOpenRTBBidValid` and
+ * `toLegacyResponse` both match by id - so without this step every native bid is
+ * discarded client-side. The legacy adapter avoided the problem by emitting legacy
+ * keys, which routed through `toOrtbNativeResponse` and re-stamped the publisher's
+ * ids; this restores that behaviour for the ORTB path.
+ *
+ * Matching is by facet (title / img / data / video), preferring an exact sub-type
+ * match where the response provides one. Note the adserver currently strips
+ * `img.type` from response assets, so icon-vs-main-image is usually decided by the
+ * dimension fit above, and is left untouched when it cannot be resolved.
+ *
+ * @param {Bid} resp   bid response to mutate
+ * @param {Object} ctx converter context; `ctx.bidRequest.nativeOrtbRequest` is read
+ * @returns {void}
+ */
+function reconcileNativeAssetIds(resp, ctx) {
+  if (resp?.mediaType !== NATIVE) return;
+
+  const requested = deepAccess(ctx, 'bidRequest.nativeOrtbRequest.assets');
+  const responseAssets = deepAccess(resp, 'native.ortb.assets');
+  if (!Array.isArray(requested) || !requested.length) return;
+  if (!Array.isArray(responseAssets) || !responseAssets.length) return;
+
+  const claimed = new Set();
+
+  responseAssets.forEach((asset) => {
+    const facet = nativeFacetOf(asset);
+    if (!facet) return;
+
+    // Already addressed to an asset the publisher asked for - leave it be.
+    const exact = requested.find((r) => r.id === asset.id && nativeFacetOf(r) === facet);
+    if (exact) {
+      claimed.add(exact.id);
+      return;
+    }
+
+    const candidates = requested.filter(
+      (r) => nativeFacetOf(r) === facet && !claimed.has(r.id)
+    );
+    if (!candidates.length) return;
+
+    const subType = facet === 'img' ? asset.img.type : (facet === 'data' ? asset.data.type : undefined);
+
+    let match;
+    if (subType != null) {
+      match = candidates.find((c) => (facet === 'img' ? c.img : c.data)?.type === subType);
+    }
+    if (!match && candidates.length === 1) {
+      match = candidates[0];
+    }
+    if (!match && facet === 'img') {
+      match = bestImageFit(candidates, asset.img);
+    }
+    if (!match) return; // ambiguous - do not guess
+
+    claimed.add(match.id);
+    asset.id = match.id;
+  });
+}
+
 function unwrapNativeAdm(body) {
   (body.seatbid || []).forEach((seat) => {
     (seat.bid || []).forEach((b) => {
@@ -592,11 +715,43 @@ function impFn(buildImp, bidRequest, context) {
 }
 
 /**
+ * Remove non-EUR granular floors from an ORTB `imp`.
+ *
+ * The price floors module writes per-mediatype and per-format floors as
+ * `ext.bidfloor`/`ext.bidfloorcur` on `imp[mediaType]` and on every
+ * `imp.banner.format[]` entry whenever they differ from the top level pair.
+ * Those copies are not covered by deleting `imp.bidfloor`, so a non-EUR floor
+ * would otherwise still travel in a request that only transacts in EUR.
+ * Floors already denominated in EUR are left alone - they may have been set
+ * deliberately by the publisher through `ortb2Imp`.
+ *
+ * @param {Object} imp  OpenRTB impression object to mutate.
+ * @returns {void}
+ */
+function stripForeignGranularFloors(imp) {
+  const holders = ALL_MEDIATYPES.map((mediaType) => imp[mediaType]).concat(imp.banner?.format || []);
+
+  holders.forEach((holder) => {
+    const ext = holder && holder.ext;
+    if (!ext || ext.bidfloorcur === CURRENCY_CODE) {
+      return;
+    }
+    delete ext.bidfloor;
+    delete ext.bidfloorcur;
+    if (Object.keys(ext).length === 0) {
+      delete holder.ext;
+    }
+  });
+}
+
+/**
  * Apply Price Floors to a single ORTB `imp`.
  *
  * Behavior:
  * - Clears any previously set imp.bidfloor/bidfloorcur (e.g., from default processors).
+ * - Clears non-EUR granular floors left on the imp by the price floors module.
  * - No-op when `bidRequest.getFloor` is missing.
+ * - Leaves the imp unfloored when `getFloor` throws, rather than losing the imp.
  * - Uses `derivePrimaryMediaType(bidRequest)` to select the mediaType (defaults to `'*'`).
  * - For banner: if exactly one size exists, passes `[w, h]`; otherwise passes `'*'`.
  *   For video: always passes `'*'`.
@@ -617,6 +772,8 @@ function applyFloorToImp(imp, bidRequest) {
     delete imp.bidfloorcur;
   }
 
+  stripForeignGranularFloors(imp);
+
   const mediaType = derivePrimaryMediaType(bidRequest) || '*';
 
   // size param: single banner size -> [w,h]; otherwise '*'. For video always '*'.
@@ -626,11 +783,19 @@ function applyFloorToImp(imp, bidRequest) {
     if (sizes.length === 1) sizeArg = sizes[0];
   }
 
-  const floor = bidRequest.getFloor({
-    currency: CURRENCY_CODE,
-    mediaType,
-    size: sizeArg
-  });
+  let floor;
+  try {
+    floor = bidRequest.getFloor({
+      currency: CURRENCY_CODE,
+      mediaType,
+      size: sizeArg
+    });
+  } catch (e) {
+    // Publisher supplied floor code can throw; core's own tryGetFloor swallows it
+    // too. Bid without a floor instead of letting the imp be dropped.
+    logWarn('yieldlab: unable to compute floor for bid', bidRequest, e);
+    return;
+  }
 
   if (floor && floor.currency === CURRENCY_CODE && Number.isFinite(floor.floor)) {
     imp.bidfloor = floor.floor;

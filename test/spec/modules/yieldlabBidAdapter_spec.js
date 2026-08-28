@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { spec } from 'modules/yieldlabBidAdapter.js';
 import { newBidder } from 'src/adapters/bidderFactory.js';
+import { isNativeOpenRTBBidValid, toLegacyResponse, toOrtbNativeRequest, toOrtbNativeResponse } from 'src/native.js';
 
 import 'src/prebid.js';
 import 'modules/currency.js';
@@ -9,7 +10,6 @@ import 'modules/multibid/index.js';
 import 'modules/priceFloors.js';
 import 'modules/consentManagementTcf.js';
 import 'modules/consentManagementUsp.js';
-import 'modules/paapi.js';
 
 import { hook } from 'src/hook.js';
 
@@ -147,6 +147,14 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
       expect(ortb).to.have.nested.property('source.schain.ver', '1.0');
+    });
+
+    it('returns no request at all when not a single imp could be built', () => {
+      // An ORTB request without impressions is invalid, and the converter drops
+      // any imp it fails to build - so the adapter leaves the auction instead.
+      const req = spec.buildRequests([], { auctionId: 'no-imps', timeout: 300 });
+
+      expect(req).to.deep.equal([]);
     });
 
     describe('applyIabContent', () => {
@@ -471,6 +479,126 @@ describe('yieldlabBidAdapter (ORTB)', () => {
     }
   });
 
+  describe('native asset-id contract with the adserver native template', () => {
+    if (FEATURES.NATIVE) {
+      // The adserver builds its outgoing native request from the adslot's configured native
+      // template and deliberately ignores imp.native.request, so the DSP answers with
+      // the TEMPLATE's asset ids. Prebid validates and renders by id, so the adapter reconciles
+      // the two in reconcileNativeAssetIds(). Note Adserver strips img.type from the response.
+      const TEMPLATE_IMAGE_URL = 'https://ad.yieldlab.net/qa/main.jpg';
+      const TEMPLATE_13_ADM = JSON.stringify({
+        native: {
+          ver: '1.2',
+          link: { url: 'https://ad.yieldlab.net/qa/click' },
+          assets: [
+            { id: 4, img: { url: TEMPLATE_IMAGE_URL, w: 300, h: 250 } }
+          ],
+          eventtrackers: [{ event: 1, method: 1, url: 'https://ad.yieldlab.net/1x1.gif' }]
+        }
+      });
+
+      /** Build a native bid request the way the auction would, with nativeOrtbRequest populated. */
+      const nativeBid = (nativeCfg) => {
+        const bid = { ...DEFAULT_REQUEST(), mediaTypes: { native: nativeCfg } };
+        bid.nativeOrtbRequest = toOrtbNativeRequest(nativeCfg);
+        return bid;
+      };
+
+      /** Run a bid request through buildRequests + interpretResponse against the template adm. */
+      const interpretTemplateResponse = (bidRequest) => {
+        const req = spec.buildRequests([bidRequest], { auctionId: 'nat-tpl' });
+        const ortbReq = JSON.parse(req.data);
+        const res = spec.interpretResponse({
+          body: {
+            id: 'nat-tpl',
+            cur: 'EUR',
+            seatbid: [{
+              bid: [{
+                impid: ortbReq.imp[0].id,
+                price: 1.0,
+                adm: TEMPLATE_13_ADM,
+                adomain: ['yieldlab'],
+                crid: 'qa-native-crid'
+              }]
+            }]
+          }
+        }, req);
+        expect(res).to.have.length(1);
+        return res[0];
+      };
+
+      it('numbers publisher assets from 0, so the template id 4 is never among them', () => {
+        const publisherRequest = toOrtbNativeRequest(NATIVE_REQUEST().mediaTypes.native);
+        const ids = publisherRequest.assets.map((asset) => asset.id);
+
+        expect(ids[0]).to.equal(0);
+        expect(ids).to.not.include(4);
+      });
+
+      it('a publisher using the standard mediaTypes.native shorthand gets a usable native bid', () => {
+        const bid = nativeBid({ icon: { required: true, sizes: [100, 100] } });
+        const bidResponse = interpretTemplateResponse(bid);
+
+        // The template's id 4 has been reconciled onto the publisher's own id.
+        expect(bidResponse.mediaType).to.equal('native');
+        expect(bidResponse.native.ortb.assets.map((a) => a.id)).to.deep.equal([0]);
+        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
+      });
+
+      it('files the image in the image slot, not the icon slot', () => {
+        const bid = nativeBid({
+          title: { required: false, len: 90 },
+          body: { required: false },
+          image: { required: false, sizes: [300, 250] }
+        });
+        const bidResponse = interpretTemplateResponse(bid);
+        const legacy = toLegacyResponse(bidResponse.native.ortb, bid.nativeOrtbRequest);
+
+        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
+        expect(legacy.image?.url).to.equal(TEMPLATE_IMAGE_URL);
+        expect(legacy.icon).to.equal(undefined);
+      });
+
+      it('leaves the id alone when the facet is ambiguous and cannot be resolved', () => {
+        // Publisher wants BOTH an icon and a main image. The adserver strips img.type from the
+        // response, and neither requested size fits 300x250, so there is no safe way to tell
+        // which slot this image belongs in. Guessing would render a main image as an icon, so
+        // the asset is left untouched and the bid is rejected downstream instead.
+        const bid = nativeBid({
+          icon: { required: false, sizes: [16, 16] },
+          image: { required: false, sizes: [100, 100] }
+        });
+        const bidResponse = interpretTemplateResponse(bid);
+
+        expect(bidResponse.native.ortb.assets.map((a) => a.id)).to.deep.equal([4]);
+      });
+
+      it('still rejects when the template cannot supply a required facet', () => {
+        // Publisher requires title + body + image + icon; template 13 has only one image. No
+        // amount of id reconciliation can invent a title, so the bid is correctly rejected.
+        // This is the residual gap: it is publisher misconfiguration under the template-driven
+        // model, not an adapter defect.
+        const bid = nativeBid(NATIVE_REQUEST().mediaTypes.native);
+        const bidResponse = interpretTemplateResponse(bid);
+
+        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(false);
+      });
+
+      it('leaves an already-correct id untouched when the publisher mirrors the template', () => {
+        const mirroredOrtb = {
+          ver: '1.2',
+          assets: [{ id: 4, required: 0, img: { type: 1, wmin: 100, hmin: 100 } }]
+        };
+        const bid = { ...DEFAULT_REQUEST(), mediaTypes: { native: { ortb: mirroredOrtb } } };
+        bid.nativeOrtbRequest = mirroredOrtb;
+
+        const bidResponse = interpretTemplateResponse(bid);
+
+        expect(bidResponse.native.ortb.assets.map((a) => a.id)).to.deep.equal([4]);
+        expect(isNativeOpenRTBBidValid(bidResponse.native.ortb, bid.nativeOrtbRequest)).to.equal(true);
+      });
+    }
+  });
   describe('applyNetRevenue', () => {
     it('sets bidResponse.netRevenue from bid.ext.netrevenue (true)', () => {
       const bid = DEFAULT_REQUEST();
@@ -527,6 +655,33 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       const syncs = spec.getUserSyncs({ iframeEnabled: false, pixelEnabled: false }, [], null, null);
       expect(syncs).to.deep.equal([]);
     });
+
+    it('omits both GDPR params when there is no consent data', () => {
+      const syncs = spec.getUserSyncs(syncOptions, [], undefined, undefined);
+
+      expect(syncs).to.be.an('array').with.length(1);
+      expect(syncs[0].url).to.include('/d/6846326/766/2x2?');
+      expect(syncs[0].url).to.include('type=h');
+      expect(syncs[0].url).to.match(/ts=\d+/);
+      expect(syncs[0].url).to.not.include('gdpr=');
+      expect(syncs[0].url).to.not.include('gdpr_consent=');
+    });
+
+    it('sends gdpr=0 when gdprApplies is false', () => {
+      const syncs = spec.getUserSyncs(syncOptions, [], { gdprApplies: false, consentString: 'CONSENT-0' }, null);
+
+      expect(syncs).to.have.length(1);
+      expect(syncs[0].url).to.include('gdpr=0');
+      expect(syncs[0].url).to.include('gdpr_consent=CONSENT-0');
+    });
+
+    it('omits gdpr but keeps the consent string when gdprApplies is not a boolean', () => {
+      const syncs = spec.getUserSyncs(syncOptions, [], { consentString: 'CONSENT-ONLY' }, null);
+
+      expect(syncs).to.have.length(1);
+      expect(syncs[0].url).to.not.include('gdpr=');
+      expect(syncs[0].url).to.include('gdpr_consent=CONSENT-ONLY');
+    });
   });
 
   describe('applies floors (impFn)', () => {
@@ -573,6 +728,157 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(ortb.imp[0]).to.not.have.property('bidfloor');
       expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
     });
+
+    it('deletes the floor the converter already set when the currency is not EUR', () => {
+      const bid = DEFAULT_REQUEST();
+      const calls = [];
+      bid.getFloor = (args) => {
+        calls.push(args);
+        return { currency: 'USD', floor: 4.5 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-usd-delete', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      // The converter's own bidfloor processor asks first (with size '*'), so a USD
+      // floor is on the imp by the time applyFloorToImp runs; it has to remove it
+      // rather than let a USD number travel in a EUR-only request.
+      expect(calls.length).to.be.greaterThan(1);
+      expect(ortb.imp[0]).to.not.have.property('bidfloor');
+      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
+    });
+
+    it('strips the non-EUR granular floors the price floors module scatters over the imp', () => {
+      // setGranularBidfloors copies per-mediatype and per-format floors onto
+      // imp[mediaType].ext and imp.banner.format[].ext whenever they differ from
+      // the top level pair; deleting imp.bidfloor alone would leave them behind.
+      const bid = DEFAULT_REQUEST();
+      bid.mediaTypes.video = { playerSize: [[640, 480]], context: 'outstream', mimes: ['video/mp4'] };
+      bid.getFloor = ({ mediaType, size }) => {
+        if (Array.isArray(size)) return { currency: 'USD', floor: 7 };
+        if (mediaType === 'banner') return { currency: 'USD', floor: 6 };
+        if (mediaType === 'video') return { currency: 'USD', floor: 8 };
+        return { currency: 'USD', floor: 5 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-granular-usd', timeout: 300 });
+      const imp = JSON.parse(req.data).imp[0];
+
+      expect(imp).to.not.have.property('bidfloor');
+      expect(imp).to.not.have.property('bidfloorcur');
+      expect(imp.banner).to.not.have.property('ext');
+      (imp.banner.format || []).forEach((format) => {
+        expect(format).to.not.have.property('ext');
+      });
+      if (imp.video) {
+        expect(imp.video).to.not.have.property('ext');
+      }
+    });
+
+    it('keeps granular floors that are already in EUR', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.getFloor = ({ mediaType, size }) => {
+        if (Array.isArray(size)) return { currency: 'EUR', floor: 7 };
+        if (mediaType === 'banner') return { currency: 'EUR', floor: 6 };
+        return { currency: 'EUR', floor: 5 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-granular-eur', timeout: 300 });
+      const imp = JSON.parse(req.data).imp[0];
+
+      expect(imp.bidfloor).to.equal(7);
+      expect(imp).to.have.property('bidfloorcur', 'EUR');
+      expect(imp.banner).to.have.nested.property('ext.bidfloor', 6);
+      expect(imp.banner).to.have.nested.property('ext.bidfloorcur', 'EUR');
+    });
+
+    it('keeps the imp, unfloored, when getFloor throws', () => {
+      // Publisher supplied floor code can throw (priceFloors calls
+      // inverseBidAdjustment unguarded). Without a catch the converter drops the
+      // whole imp and the request goes out with no impressions.
+      const bid = DEFAULT_REQUEST();
+      bid.getFloor = () => {
+        throw new Error('floor provider exploded');
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-throws', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb.imp).to.be.an('array').with.length(1);
+      expect(ortb.imp[0].id).to.equal(bid.bidId);
+      expect(ortb.imp[0].tagid).to.equal('1111');
+      expect(ortb.imp[0]).to.not.have.property('bidfloor');
+      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
+    });
+
+    it('passes "*" as size when the banner has more than one size', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.mediaTypes.banner.sizes = [[728, 90], [800, 250]];
+      let lastArgs;
+      bid.getFloor = (args) => {
+        lastArgs = args;
+        return { currency: 'EUR', floor: 0.8 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-multisize', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(lastArgs).to.deep.equal({ currency: 'EUR', mediaType: 'banner', size: '*' });
+      expect(ortb.imp[0].bidfloor).to.equal(0.8);
+      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
+    });
+
+    it('prefers banner over video on a multiformat ad unit', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.mediaTypes.video = { playerSize: [[640, 480]], context: 'outstream' };
+      let lastArgs;
+      bid.getFloor = (args) => {
+        lastArgs = args;
+        return { currency: 'EUR', floor: 1.7 };
+      };
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-multiformat', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(lastArgs.mediaType).to.equal('banner');
+      expect(lastArgs.size).to.deep.equal([728, 90]);
+      expect(ortb.imp[0].bidfloor).to.equal(1.7);
+    });
+
+    it('leaves the imp unfloored when the bid has no getFloor', () => {
+      const bid = DEFAULT_REQUEST();
+      expect(bid.getFloor).to.equal(undefined);
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-nogetfloor', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb.imp[0]).to.not.have.property('bidfloor');
+      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
+    });
+
+    it('leaves the imp unfloored when getFloor answers with a non-finite floor', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.getFloor = () => ({ currency: 'EUR', floor: undefined });
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-nonfinite', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb.imp[0]).to.not.have.property('bidfloor');
+      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
+    });
+
+    it('forwards a zero floor, which the converter alone would have skipped', () => {
+      const bid = DEFAULT_REQUEST();
+      bid.getFloor = () => ({ currency: 'EUR', floor: 0 });
+
+      const req = spec.buildRequests([bid], { auctionId: 'flo-zero', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      // applyFloorToImp gates on Number.isFinite, the converter's tryGetFloor on
+      // truthiness - so a floor of exactly 0 only survives because of the adapter.
+      expect(ortb.imp[0].bidfloor).to.equal(0);
+      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
+    });
   });
 
   describe('applyConsent', () => {
@@ -614,6 +920,34 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       expect(ortb).to.have.nested.property('regs.ext.gdpr', 0);
       expect(ortb).to.have.nested.property('regs.gdpr', 0);
+      expect(ortb).to.not.have.nested.property('user.consent');
+    });
+
+    it('mirrors an empty consent string rather than dropping it', () => {
+      const bid = DEFAULT_REQUEST();
+      const bidderRequest = {
+        auctionId: 'gdpr-empty-consent',
+        timeout: 400,
+        ortb2: {
+          regs: { ext: { gdpr: 1 } },
+          user: { ext: { consent: '' } }
+        }
+      };
+
+      const req = spec.buildRequests([bid], bidderRequest);
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.have.nested.property('user.ext.consent', '');
+      expect(ortb).to.have.nested.property('user.consent', '');
+    });
+
+    it('leaves both 2.6 fields absent when the page supplies no consent data', () => {
+      const bid = DEFAULT_REQUEST();
+
+      const req = spec.buildRequests([bid], { auctionId: 'gdpr-absent', timeout: 400 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.not.have.nested.property('regs.gdpr');
       expect(ortb).to.not.have.nested.property('user.consent');
     });
   });
@@ -658,5 +992,141 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(ortb).to.have.nested.property('source.ext.schain.ver', '1.0');
       expect(ortb).to.have.nested.property('source.schain.ver', '1.0');
     });
+
+    it('mirrors the whole chain, nodes included', () => {
+      const bid = DEFAULT_REQUEST();
+
+      const req = spec.buildRequests([bid], {
+        auctionId: 'schain-nodes',
+        timeout: 300,
+        ortb2: { source: { ext: { schain: bid.schain } } }
+      });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb.source.schain).to.deep.equal(bid.schain);
+      expect(ortb.source.schain.nodes).to.have.length(2);
+      expect(ortb.source.schain.nodes[1].name).to.equal('indirectseller2 name with comma , and bang !');
+    });
+
+    it('leaves source.schain absent when the page provides no chain', () => {
+      const bid = DEFAULT_REQUEST();
+
+      const req = spec.buildRequests([bid], { auctionId: 'schain-none', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.not.have.nested.property('source.schain');
+    });
+  });
+
+  describe('applyEids', () => {
+    it('mirrors user.ext.eids to user.eids', () => {
+      const bid = DEFAULT_REQUEST();
+
+      const req = spec.buildRequests([bid], {
+        auctionId: 'eids-mirror',
+        timeout: 300,
+        ortb2: { user: { ext: { eids: bid.userIdAsEids } } }
+      });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb.user.ext.eids).to.deep.equal(bid.userIdAsEids);
+      expect(ortb.user.eids).to.deep.equal(bid.userIdAsEids);
+      expect(ortb.user.eids[0].source).to.equal('netid.de');
+      expect(ortb.user.eids[1].uids[0].atype).to.equal(2);
+    });
+
+    it('leaves user.eids absent when the page provides no eids', () => {
+      const bid = DEFAULT_REQUEST();
+
+      const req = spec.buildRequests([bid], { auctionId: 'eids-none', timeout: 300 });
+      const ortb = JSON.parse(req.data);
+
+      expect(ortb).to.not.have.nested.property('user.eids');
+    });
+  });
+
+  describe('dealId', () => {
+    it('is left unset when the served bid carries no dealid', () => {
+      const bid = DEFAULT_REQUEST();
+      const req = spec.buildRequests([bid], { auctionId: 'deal-none', timeout: 300 });
+      const ortbReq = JSON.parse(req.data);
+
+      const serverResponse = {
+        body: {
+          id: 'deal-none',
+          seatbid: [{
+            bid: [{
+              impid: ortbReq.imp[0].id,
+              price: 1.0,
+              adm: '<div>banner creative</div>',
+              crid: 'no-deal',
+              adomain: ['yieldlab']
+              // no dealid
+            }]
+          }],
+          cur: 'EUR'
+        }
+      };
+
+      const res = spec.interpretResponse(serverResponse, req);
+      expect(res).to.have.length(1);
+      expect(res[0]).to.not.have.property('dealId');
+    });
+  });
+  describe('facet-type mapping as a candidate fix for the native id mismatch', () => {
+    if (FEATURES.NATIVE) {
+      // The legacy (pre-POST-ORTB) adapter matched the DSP's assets by FACET TYPE and emitted
+      // legacy keys; Prebid then converted back via toOrtbNativeResponse, which clones the
+      // PUBLISHER's requested asset and so stamps the publisher's id on. That is why legacy
+      // never hit the id mismatch. These two tests pin what that approach does and does NOT fix.
+      const legacyStyleFacetMap = (ortbAssets) => {
+        const icon = ortbAssets.find(a => a.img && a.img.type === 1);
+        const image = ortbAssets.find(a => a.img && a.img.type === 3);
+        const title = ortbAssets.find(a => a.title);
+        const body = ortbAssets.find(a => a.data);
+        const out = { clickUrl: 'https://ad.yieldlab.net/qa/click' };
+        if (title) out.title = title.title.text;
+        if (body) out.body = body.data.value;
+        if (image) out.image = { url: image.img.url, width: image.img.w, height: image.img.h };
+        if (icon) out.icon = { url: icon.img.url, width: icon.img.w, height: icon.img.h };
+        return out;
+      };
+
+      // Stage native template 13: exactly ONE asset, an icon image (img.type 1), id 4.
+      const TPL_IMAGE_URL = 'https://ad.yieldlab.net/qa/main.jpg';
+      const TEMPLATE_13_ASSETS = [
+        { id: 4, img: { type: 1, url: TPL_IMAGE_URL, w: 300, h: 250 } }
+      ];
+
+      const validateVia = (publisherNativeCfg) => {
+        const publisherRequest = toOrtbNativeRequest(publisherNativeCfg);
+        const converted = toOrtbNativeResponse(legacyStyleFacetMap(TEMPLATE_13_ASSETS), publisherRequest);
+        const withLink = { ...converted, link: { url: 'https://ad.yieldlab.net/qa/click' } };
+        return {
+          publisherRequest,
+          converted,
+          valid: isNativeOpenRTBBidValid(withLink, publisherRequest)
+        };
+      };
+
+      it('FIXES the id mismatch when the template covers the facets the publisher asked for', () => {
+        const { converted, valid } = validateVia({ icon: { required: true, sizes: [100, 100] } });
+
+        // The template's id 4 has been rewritten to the publisher's own id 0.
+        expect(converted.assets.map(a => a.id)).to.deep.equal([0]);
+        expect(valid).to.equal(true);
+      });
+
+      it('does NOT help when the template lacks facets the publisher marked required', () => {
+        const { publisherRequest, converted, valid } = validateVia(NATIVE_REQUEST().mediaTypes.native);
+
+        // Publisher required title + body + image + icon; template 13 only has an icon, so only
+        // the icon can be mapped. The bid is still rejected -- and rightly so: the missing assets
+        // were never requested from the DSP. No response-side mapping can invent them.
+        expect(publisherRequest.assets.filter(a => a.required === 1).map(a => a.id)).to.deep.equal([0, 1, 2, 3]);
+        expect(converted.assets.map(a => a.id)).to.deep.equal([3]);
+        expect(valid).to.equal(false);
+      });
+    }
   });
 });
