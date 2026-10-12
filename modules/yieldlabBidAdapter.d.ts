@@ -26,8 +26,10 @@ export interface YieldlabBidderParams {
 }
 
 /**
- * IAB content fields, copied into the request's `content` as given. Values may
- * be strings or numbers; `live` is renamed to the OpenRTB `livestream`.
+ * IAB content fields, copied into the request's `content` as given, over any
+ * first-party content. Values may be strings or numbers; null values are
+ * skipped. `live` is sent as the OpenRTB `livestream` unless `livestream` is
+ * set too. Prefer setting `ortb2.site.content` (or `ortb2.app.content`).
  */
 export interface YieldlabIabContent {
   id?: string;

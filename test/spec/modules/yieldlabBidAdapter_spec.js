@@ -211,6 +211,70 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         expect(ortb.site.content.title).to.equal('new-title'); // overwritten
         expect(ortb.site.content.series).to.equal('keep-series'); // unrelated preserved
       });
+
+      it('leaves a page content field alone when the param sets it to null', () => {
+        const bid = DEFAULT_REQUEST();
+        bid.params.iabContent = { title: null, series: 'param-series' };
+
+        const req = spec.buildRequests([bid], {
+          auctionId: 'auc-iab-null',
+          ortb2: { site: { content: { title: 'page-title' } } }
+        });
+
+        expect(req.data.site.content).to.deep.equal({ title: 'page-title', series: 'param-series' });
+      });
+
+      it('writes to app.content for an app request', () => {
+        const bid = DEFAULT_REQUEST();
+        bid.params.iabContent = { title: 'app-title', live: 0 };
+
+        const req = spec.buildRequests([bid], {
+          auctionId: 'auc-iab-app',
+          ortb2: { app: { bundle: 'com.example', content: { series: 'app-series' } } }
+        });
+
+        expect(req.data.app.content).to.deep.equal({ series: 'app-series', title: 'app-title', livestream: 0 });
+        expect(req.data).to.not.have.nested.property('site.content');
+      });
+
+      it('takes the first ad unit that sets iabContent for the whole request', () => {
+        const without = DEFAULT_REQUEST();
+        delete without.params.iabContent;
+        const first = DEFAULT_REQUEST();
+        first.bidId = 'bid-2';
+        first.params.iabContent = { title: 'first' };
+        const second = DEFAULT_REQUEST();
+        second.bidId = 'bid-3';
+        second.params.iabContent = { title: 'second' };
+
+        const req = spec.buildRequests([without, first, second], { auctionId: 'auc-iab-first' });
+
+        expect(req.data.site.content.title).to.equal('first');
+      });
+
+      it('prefers an explicit livestream over the live alias, whatever the key order', () => {
+        const liveFirst = DEFAULT_REQUEST();
+        liveFirst.params.iabContent = { live: 1, livestream: 0 };
+        const livestreamFirst = DEFAULT_REQUEST();
+        livestreamFirst.params.iabContent = { livestream: 0, live: 1 };
+
+        for (const bid of [liveFirst, livestreamFirst]) {
+          const content = spec.buildRequests([bid], { auctionId: 'auc-iab-live' }).data.site.content;
+          expect(content.livestream).to.equal(0);
+          expect(content).to.not.have.property('live');
+        }
+      });
+
+      it('ignores an iabContent param that is not a plain object', () => {
+        for (const iabContent of ['title=x', 42, ['a', 'b']]) {
+          const bid = DEFAULT_REQUEST();
+          bid.params.iabContent = iabContent;
+
+          const req = spec.buildRequests([bid], { auctionId: 'auc-iab-shape' });
+
+          expect(req.data).to.not.have.nested.property('site.content');
+        }
+      });
     });
 
     describe('applyVmExt', () => {

@@ -1,7 +1,7 @@
 import { registerBidder } from '../src/adapters/bidderFactory.js';
 import { BANNER, NATIVE, VIDEO } from '../src/mediaTypes.js';
 import { Renderer } from '../src/Renderer.js';
-import { deepAccess, isArray, logWarn, timestamp } from '../src/utils.js';
+import { deepAccess, isArray, isPlainObject, logWarn, timestamp } from '../src/utils.js';
 import { ortbConverter } from '../libraries/ortbConverter/converter.js';
 
 /**
@@ -319,42 +319,31 @@ function applySchain(ortb) {
 }
 
 /**
- * Merge page-provided IAB content into ORTB's site.content and app.content.
+ * Merge `params.iabContent` into the request's `app.content`, or `site.content`
+ * for a web request, over whatever the page's first-party data put there.
  *
- * - Chooses site.content vs app.content automatically
- * - Copies all fields from params.iabContent as-is
- * - Only alias applied: `live` -> `livestream`
- * - Ignores null/undefined values
+ * The first ad unit that sets the param applies to the whole request. Null
+ * fields are skipped, so they never clear a first-party value. `live` is the
+ * name the /yp endpoint used and is sent as OpenRTB's `livestream`, unless the
+ * publisher also set `livestream` itself.
  *
- *  @param {Object} ortb              The OpenRTB request object to mutate.
- *  @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
- *  @returns {void}
+ * @param {Object} ortb              The OpenRTB request object to mutate.
+ * @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
+ * @returns {void}
  */
 function applyIabContent(ortb, bidRequests) {
-  const holder = bidRequests.find(bidRequest => bidRequest?.params?.iabContent);
-  const iabContent = holder && holder.params.iabContent;
-  if (!iabContent || typeof iabContent !== 'object') {
+  const iabContent = bidRequests.map(bidRequest => bidRequest.params?.iabContent).find(isPlainObject);
+  if (!iabContent) {
     return;
   }
 
-  let parent;
-  if (ortb.app) {
-    parent = ortb.app;
-  } else {
-    ortb.site = ortb.site || {};
-    parent = ortb.site;
-  }
+  const { live, ...fields } = iabContent;
+  const content = Object.fromEntries(
+    Object.entries({ ...fields, livestream: fields.livestream ?? live }).filter(([, value]) => value != null)
+  );
 
-  parent.content = parent.content || {};
-  const content = parent.content;
-
-  Object.entries(iabContent).forEach(([field, value]) => {
-    if (value == null) {
-      return;
-    }
-    const ortbField = (field === 'live') ? 'livestream' : field;
-    content[ortbField] = value;
-  });
+  const parent = ortb.app || (ortb.site = ortb.site || {});
+  parent.content = { ...parent.content, ...content };
 }
 
 /**
