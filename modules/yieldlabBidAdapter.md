@@ -104,3 +104,7 @@ const adUnit = {
     ]
 };
 ```
+
+# Price Floors
+
+Floors from the [Price Floors module](https://docs.prebid.org/dev-docs/modules/floors.html) are sent with each impression. For an ad unit that declares a single media type, the floor is looked up for that media type, and for its size when a banner declares only one. For an ad unit that declares several media types, the floor configured for any media type (`*`) is sent: Yieldlab applies one floor per impression, whichever media type the Adslot is set up for. Floors are sent in EUR or USD; a floor in another currency is not sent.
