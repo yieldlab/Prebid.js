@@ -322,7 +322,8 @@ function applySchain(ortb) {
  * The first ad unit that sets the param applies to the whole request. Null
  * fields are skipped, so they never clear a first-party value. `live` is the
  * name the /yp endpoint used and is sent as OpenRTB's `livestream`, unless the
- * publisher also set `livestream` itself.
+ * publisher also set `livestream` itself, and a `keywords` array is joined into
+ * the comma-separated string OpenRTB defines, as /yp did.
  *
  * @param {Object} ortb              The OpenRTB request object to mutate.
  * @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
@@ -338,6 +339,10 @@ function applyIabContent(ortb, bidRequests) {
   const content = Object.fromEntries(
     Object.entries({ ...fields, livestream: fields.livestream ?? live }).filter(([, value]) => value != null)
   );
+  // /yp took keywords as an array; OpenRTB's keywords is a comma-separated string.
+  if (Array.isArray(content.keywords)) {
+    content.keywords = content.keywords.join(',');
+  }
 
   const parent = ortb.app || (ortb.site = ortb.site || {});
   parent.content = { ...parent.content, ...content };

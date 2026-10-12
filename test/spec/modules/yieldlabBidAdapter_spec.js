@@ -265,6 +265,16 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         }
       });
 
+      it('joins a keywords array into the comma-separated string OpenRTB defines', () => {
+        // The adserver rejects a request whose content.keywords is not a string.
+        const bid = DEFAULT_REQUEST();
+        bid.params.iabContent = { keywords: ['k1', 'k2'] };
+
+        const content = spec.buildRequests([bid], { auctionId: 'auc-iab-kw' }).data.site.content;
+
+        expect(content.keywords).to.equal('k1,k2');
+      });
+
       it('ignores an iabContent param that is not a plain object', () => {
         for (const iabContent of ['title=x', 42, ['a', 'b']]) {
           const bid = DEFAULT_REQUEST();

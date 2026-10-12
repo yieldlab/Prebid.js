@@ -26,14 +26,15 @@ export interface YieldlabBidderParams {
 }
 
 /**
- * IAB content fields, copied into the request's `content` as given, over any
- * first-party content. Values may be strings or numbers; null values are
- * skipped. `live` is sent as the OpenRTB `livestream` unless `livestream` is
- * set too. Prefer setting `ortb2.site.content` (or `ortb2.app.content`).
+ * IAB content fields, copied into the request's `content` over any first-party
+ * content. Values must have the types OpenRTB 2.6 gives them: Yieldlab rejects
+ * a request whose content does not. Null values are skipped, `live` is sent as
+ * `livestream` unless `livestream` is set too, and a `keywords` array is joined
+ * with commas. Prefer setting `ortb2.site.content` (or `ortb2.app.content`).
  */
 export interface YieldlabIabContent {
   id?: string;
-  episode?: string | number;
+  episode?: number;
   title?: string;
   series?: string;
   season?: string;
@@ -42,11 +43,12 @@ export interface YieldlabIabContent {
   isrc?: string;
   url?: string;
   cat?: string[];
-  context?: string | number;
+  context?: number;
+  /** Comma-separated, as in OpenRTB. An array is joined with commas. */
   keywords?: string | string[];
   /** Alias of `livestream`. */
-  live?: string | number;
-  livestream?: string | number;
+  live?: 0 | 1;
+  livestream?: 0 | 1;
   /** Any other OpenRTB content field, passed through unchanged. */
   [field: string]: unknown;
 }
