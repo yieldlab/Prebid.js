@@ -1,7 +1,7 @@
 import { registerBidder } from '../src/adapters/bidderFactory.js';
 import { BANNER, NATIVE, VIDEO } from '../src/mediaTypes.js';
 import { Renderer } from '../src/Renderer.js';
-import { deepAccess, isArray, timestamp } from '../src/utils.js';
+import { deepAccess, isArray, isPlainObject, logWarn, timestamp } from '../src/utils.js';
 import { ortbConverter } from '../libraries/ortbConverter/converter.js';
 
 /**
@@ -13,7 +13,6 @@ import { ortbConverter } from '../libraries/ortbConverter/converter.js';
  * @typedef {import('../src/adapters/bidderFactory.js').UserSync} UserSync
  */
 
-/** Keep this endpoint for local testing (see: hello world example). */
 const ENDPOINT = 'https://ad.yieldlab.net';
 const ORTB_PATH = '/ortb';
 const BIDDER_CODE = 'yieldlab';
@@ -21,13 +20,78 @@ const BID_RESPONSE_TTL_SEC = 300;
 const CURRENCY_CODE = 'EUR';
 const OUTSTREAMPLAYER_URL = 'https://ad.adition.com/dynamic.ad?a=o193092&ma_loadEvent=ma-start-event';
 const GVLID = 70;
-const DIMENSION_SIGN = 'x';
 
-const MTYPE = {
-  BANNER: 1,
-  VIDEO: 2,
-  NATIVE: 4
-};
+// Sent as ext.vm.client. The adserver supports native 1.1 but exempts our
+// requests from its version check (core declares 1.2). It answers native without
+// a `native` wrapper object, as Native 1.1 and newer specify, which is what
+// Prebid parses.
+const CLIENT = 'prebid-js';
+
+/**
+ * ORTB `request` customizer for the converter. `id`, `tmax` and `site.page`
+ * come from core. `ext.vm.client` is set last so page-level `ortb2.ext.vm`
+ * cannot override it.
+ *
+ * @param {Function} buildRequest  Base request builder provided by the converter.
+ * @param {Object[]} imps          Generated ORTB impressions.
+ * @param {*} bidderReq            The originating Prebid bidderRequest.
+ * @param {Object} ctx             Converter request context; `ctx.bidRequests` is read.
+ * @returns {Object}               The finalized OpenRTB request.
+ */
+function requestFn(buildRequest, imps, bidderReq, ctx) {
+  const ortb = buildRequest(imps, bidderReq, ctx);
+  const bidRequests = ctx?.bidRequests || [];
+
+  if (!ortb.cur || !ortb.cur.length) {
+    ortb.cur = [CURRENCY_CODE];
+  }
+
+  applyConsent(ortb);
+
+  applyEids(ortb);
+
+  applySchain(ortb);
+
+  applyIabContent(ortb, bidRequests);
+
+  applyVmExt(ortb, bidRequests, bidderReq);
+
+  ortb.ext.vm.client = CLIENT;
+
+  return ortb;
+}
+
+/**
+ * ORTB `bidResponse` customizer for the converter. The media type comes from
+ * `mtype`, which the endpoint sets from the adslot's configured ad type.
+ *
+ * @param {Function} buildBidResponse  Base bid response builder provided by the converter.
+ * @param {Object} bid                 Raw ORTB bid (`seatbid[].bid[]`).
+ * @param {Object} ctx                 Converter imp context for this bid.
+ * @returns {Bid}                      The finalized Prebid bid response.
+ */
+function bidResponseFn(buildBidResponse, bid, ctx) {
+  const resp = buildBidResponse(bid, ctx);
+
+  applyNetRevenue(resp, bid);
+
+  if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
+    setVideoSize(resp, ctx);
+    installOutstreamRendererIfNeeded(resp, ctx);
+  }
+
+  return resp;
+}
+
+const converter = ortbConverter({
+  context: {
+    currency: CURRENCY_CODE,
+    ttl: BID_RESPONSE_TTL_SEC
+  },
+  imp: impFn,
+  request: requestFn,
+  bidResponse: bidResponseFn
+});
 
 export const spec = {
   code: BIDDER_CODE,
@@ -51,95 +115,22 @@ export const spec = {
    * @returns {ServerRequest|ServerRequest[]}
    */
   buildRequests(validBidRequests, bidderRequest) {
-    const requestFn = (buildRequest, imps, bidderReq, ctx) => {
-      const ortb = buildRequest(imps, bidderReq, ctx);
-
-      ortb.tmax = (bidderReq?.timeout != null) ? bidderReq.timeout : ortb.tmax;
-
-      if (bidderReq?.auctionId) {
-        ortb.id = bidderReq.auctionId;
-      }
-
-      if (!ortb.cur || !ortb.cur.length) {
-        ortb.cur = [CURRENCY_CODE];
-      }
-
-      const page = bidderReq?.refererInfo?.page;
-      if (page) {
-        ortb.site = ortb.site || {};
-        if (!ortb.site.page) ortb.site.page = page;
-      }
-
-      const ref = bidderReq?.refererInfo?.ref;
-      if (ref) {
-        ortb.site = ortb.site || {};
-        if (!ortb.site.ref) ortb.site.ref = ref;
-      }
-
-      applyConsent(ortb);
-
-      applyEids(ortb);
-
-      applySchain(ortb);
-
-      applyIabContent(ortb, validBidRequests);
-
-      applyVmExt(ortb, validBidRequests, bidderReq);
-
-      return ortb;
-    };
-
-    const bidResponseFn = (buildBidResponse, bid, ctx) => {
-      // mtype hint if missing
-      if (bid.mtype == null) {
-        if (deepAccess(ctx, 'bidRequest.mediaTypes.banner')) {
-          bid.mtype = MTYPE.BANNER;
-        } else if (deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
-          bid.mtype = MTYPE.VIDEO;
-        } else if (deepAccess(ctx, 'bidRequest.mediaTypes.native')) {
-          bid.mtype = MTYPE.NATIVE;
-        }
-      }
-
-      const resp = buildBidResponse(bid, ctx);
-
-      applyNetRevenue(resp, bid)
-      sanitizeVideoAsset(resp);
-      ensureBannerSize(resp, ctx);
-
-      if (resp.mediaType === VIDEO && deepAccess(ctx, 'bidRequest.mediaTypes.video')) {
-        setVideoSize(resp, ctx);
-        installOutstreamRendererIfNeeded(resp, ctx);
-      }
-
-      ensureMeta(resp, bid);
-
-      return resp;
-    };
-
-    const converter = ortbConverter({
-      context: {
-        currency: CURRENCY_CODE,
-        ttl: BID_RESPONSE_TTL_SEC
-      },
-      imp: impFn,
-      request: requestFn,
-      bidResponse: bidResponseFn
-    });
-
     const ortbRequest = converter.toORTB({ bidderRequest, bidRequests: validBidRequests });
-    const url = `${ENDPOINT}${ORTB_PATH}`;
+
+    // The converter drops imps it can't build; don't send a request with none.
+    if (!ortbRequest?.imp?.length) {
+      logWarn('yieldlab: no impressions could be built, skipping request');
+      return [];
+    }
 
     return {
       method: 'POST',
-      url,
-      data: JSON.stringify(ortbRequest),
+      url: `${ENDPOINT}${ORTB_PATH}`,
+      data: ortbRequest,
       options: {
         contentType: 'application/json',
         customHeaders: { 'x-openrtb-version': '2.6' }
-      },
-      converter,
-      ortbRequest
+      }
     };
   },
 
@@ -150,22 +141,12 @@ export const spec = {
    * @returns {Bid[]}
    */
   interpretResponse(serverResponse, originalRequest) {
-    if (!originalRequest?.converter || !originalRequest?.ortbRequest) {
-      return [];
-    }
     const body = serverResponse?.body;
     if (!body) {
       return [];
     }
 
-    unwrapNativeAdm(body);
-
-    const { bids } = originalRequest.converter.fromORTB({
-      request: originalRequest.ortbRequest,
-      response: body
-    });
-
-    return bids;
+    return converter.fromORTB({ request: originalRequest.data, response: body }).bids;
   },
 
   /**
@@ -279,119 +260,18 @@ function kvToQueryString(obj) {
 
 /**
  * Merge all params.targeting objects across adunits, later values overwrite earlier values.
+ *
  * @param {BidRequest[]} bidRequests
  * @returns {Object}
  */
 function mergeKeyValues(bidRequests) {
-  return bidRequests.reduce((acc, br) => {
-    const t = br.params && br.params.targeting;
-    if (t && typeof t === 'object') {
-      Object.assign(acc, t);
+  return bidRequests.reduce((merged, bidRequest) => {
+    const targeting = bidRequest.params && bidRequest.params.targeting;
+    if (targeting && typeof targeting === 'object') {
+      Object.assign(merged, targeting);
     }
-    return acc;
+    return merged;
   }, {});
-}
-
-/**
- * Add advertiser domains fallback and pass DSA if provided.
- * (Used in bidResponse and interpretResponse.)
- * @param {Bid} resp
- * @param {Object} bid
- */
-function ensureMeta(resp, bid) {
-  resp.meta = resp.meta || {};
-  if (!resp.meta.advertiserDomains || !resp.meta.advertiserDomains.length) {
-    const adomain = bid?.adomain || [];
-    resp.meta.advertiserDomains = adomain.length ? adomain : ['n/a'];
-  }
-  if (bid?.ext?.dsa) {
-    resp.meta.dsa = bid.ext.dsa;
-  }
-}
-
-/**
- * Unwrap "adm" when it is a JSON string like {"native": {...}} to just {...}.
- * No-op for non-JSON (e.g., VAST XML or HTML).
- * Also hints "mtype" to native when appropriate.
- * @param {Object} body ORTB response body
- */
-function unwrapNativeAdm(body) {
-  (body.seatbid || []).forEach((seat) => {
-    (seat.bid || []).forEach((b) => {
-      const s = (typeof b.adm === 'string') ? b.adm.trim() : null;
-      if (!s || s[0] !== '{') {
-        return;
-      }
-      try {
-        const j = JSON.parse(s);
-        if (j && j.native && typeof j.native === 'object') {
-          b.adm = JSON.stringify(j.native);
-          if (b.mtype == null) {
-            b.mtype = MTYPE.NATIVE;
-          }
-        }
-      } catch (_) {
-        // ignore malformed JSON
-      }
-    });
-  });
-}
-
-/**
- * Sanitize video asset fields on a bid.
- *
- * - Only runs for `mediaType: 'video'`
- * - Trims strings and clears blanks for `vastUrl` / `vastXml`
- *
- * @param {Bid} resp  bid response to mutate
- * @returns {void}
- */
-function sanitizeVideoAsset(resp) {
-  if (resp.mediaType !== VIDEO) {
-    return;
-  }
-  if (typeof resp.vastUrl === 'string' && !isNotBlank(resp.vastUrl)) {
-    resp.vastUrl = undefined;
-  }
-  if (typeof resp.vastXml === 'string' && !isNotBlank(resp.vastXml)) {
-    resp.vastXml = undefined;
-  }
-}
-
-/**
- * Ensure that a banner bid has "width" and "height" on the PBJS response.
- *
- * Behavior:
- * - No-op for non-banner bids.
- * - Returns early if "resp.width" and "resp.height" are already present.
- * - Otherwise tries to derive a size from the originating ad unit:
- *   1) "bidRequest.mediaTypes.banner.sizes"
- *   2) legacy "bidRequest.sizes"
- * - Accepts either a single pair [w, h] or an array of pairs [[w, h], ...] and
- *   uses the first pair found.
- *
- * @param {Bid} resp   PBJS bid response being built.
- * @param {{ bidRequest?: BidRequest }} ctx  Converter context (only "bidRequest" is read).
- * @returns {void}
- */
-function ensureBannerSize(resp, ctx) {
-  if (resp.mediaType !== BANNER) {
-    return;
-  }
-  if (resp.width && resp.height) {
-    return;
-  }
-
-  const sizes = deepAccess(ctx, 'bidRequest.mediaTypes.banner.sizes') || deepAccess(ctx, 'bidRequest.sizes');
-  const first = Array.isArray(sizes) && Array.isArray(sizes[0]) ? sizes[0] : sizes;
-  if (Array.isArray(first) && first.length >= 2) {
-    resp.width = first[0];
-    resp.height = first[1];
-  }
-}
-
-function isNotBlank(v) {
-  return (typeof v === 'string') && v.trim().length > 0;
 }
 
 /**
@@ -436,43 +316,36 @@ function applySchain(ortb) {
 }
 
 /**
- * Merge page-provided IAB content into ORTB's site.content and app.content.
+ * Merge `params.iabContent` into the request's `app.content`, or `site.content`
+ * for a web request, over whatever the page's first-party data put there.
  *
- * - Chooses site.content vs app.content automatically
- * - Copies all fields from params.iabContent as-is
- * - Only alias applied: `live` -> `livestream`
- * - Ignores null/undefined values
+ * The first ad unit that sets the param applies to the whole request. Null
+ * fields are skipped, so they never clear a first-party value. `live` is the
+ * name the /yp endpoint used and is sent as OpenRTB's `livestream`, unless the
+ * publisher also set `livestream` itself, and a `keywords` array is joined into
+ * the comma-separated string OpenRTB defines, as /yp did.
  *
- *  @param {Object} ortb              The OpenRTB request object to mutate.
- *  @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
- *  @returns {void}
+ * @param {Object} ortb              The OpenRTB request object to mutate.
+ * @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
+ * @returns {void}
  */
 function applyIabContent(ortb, bidRequests) {
-  const holder = bidRequests.find(b => b?.params?.iabContent);
-  const src = holder && holder.params.iabContent;
-  if (!src || typeof src !== 'object') {
+  const iabContent = bidRequests.map(bidRequest => bidRequest.params?.iabContent).find(isPlainObject);
+  if (!iabContent) {
     return;
   }
 
-  let parent;
-  if (ortb.app) {
-    ortb.app = ortb.app || {};
-    parent = ortb.app;
-  } else {
-    ortb.site = ortb.site || {};
-    parent = ortb.site;
+  const { live, ...fields } = iabContent;
+  const content = Object.fromEntries(
+    Object.entries({ ...fields, livestream: fields.livestream ?? live }).filter(([, value]) => value != null)
+  );
+  // /yp took keywords as an array; OpenRTB's keywords is a comma-separated string.
+  if (Array.isArray(content.keywords)) {
+    content.keywords = content.keywords.join(',');
   }
 
-  parent.content = parent.content || {};
-  const dst = parent.content;
-
-  Object.entries(src).forEach(([k, v]) => {
-    if (v == null) {
-      return;
-    }
-    const key = (k === 'live') ? 'livestream' : k;
-    dst[key] = v;
-  });
+  const parent = ortb.app || (ortb.site = ortb.site || {});
+  parent.content = { ...parent.content, ...content };
 }
 
 /**
@@ -486,7 +359,7 @@ function applyIabContent(ortb, bidRequests) {
  * @param {Object} bidderReq - Prebid bidderRequest (ortb2, refererInfo, auctionId, etc.)
  */
 function applyVmExt(ortb, bidRequests, bidderReq) {
-  const firstExtId = bidRequests.map(b => b.params?.extId).find(Boolean);
+  const firstExtId = bidRequests.map(bidRequest => bidRequest.params?.extId).find(Boolean);
   const targetingObj = mergeKeyValues(bidRequests);
   const targeting = kvToQueryString(targetingObj);
 
@@ -507,73 +380,11 @@ function applyVmExt(ortb, bidRequests, bidderReq) {
 }
 
 /**
- * Resolve the primary media type (priority: banner > video > native).
- *
- * @param {BidRequest} bid
- * @returns {'banner'|'video'|'native'|undefined} primary media type or undefined
- */
-function derivePrimaryMediaType(bid) {
-  const mt = bid.mediaTypes || {};
-  if (mt.banner) {
-    return 'banner';
-  }
-  if (mt.video) {
-    return 'video';
-  }
-  if (mt.native) {
-    return 'native';
-  }
-  return undefined;
-}
-
-/**
- * Extract banner sizes as unique [w,h] pairs.
- * Prefers `mediaTypes.banner.sizes`; falls back to legacy `sizes`.
- * Accepts `[w,h]` or `[[w,h], …]`, flattens and de-duplicates (order-preserving).
- * Ignores malformed entries. Video sizes are handled via `mediaTypes.video.playerSize`.
- *
- * @param {BidRequest} bid
- * @returns {Array<[number, number]>} de-duplicated array of `[width, height]` pairs
- */
-function extractSizePairs(bid) {
-  const { mediaTypes } = bid;
-  const sizes = [];
-
-  if (mediaTypes && mediaTypes.banner && Array.isArray(mediaTypes.banner.sizes)) {
-    if (Array.isArray(mediaTypes.banner.sizes[0])) {
-      sizes.push(...mediaTypes.banner.sizes);
-    } else {
-      sizes.push(mediaTypes.banner.sizes);
-    }
-  } else if (Array.isArray(bid.sizes)) {
-    if (Array.isArray(bid.sizes[0])) {
-      sizes.push(...bid.sizes);
-    } else {
-      sizes.push(bid.sizes);
-    }
-  }
-
-  // dedupe
-  const key = (p) => (Array.isArray(p) && p.length >= 2) ? (p[0] + DIMENSION_SIGN + p[1]) : '';
-  const seen = new Set();
-  const out = [];
-  sizes.forEach((pair) => {
-    const k = key(pair);
-    if (k && !seen.has(k)) {
-      seen.add(k);
-      out.push(pair);
-    }
-  });
-  return out;
-}
-
-/**
- * ORTB `imp` customizer for the converter.
- *
- * Behavior:
- * - Copies `params.adslotId` to `imp.tagid` (when present).
- * - Applies price floors via `applyFloorToImp(imp, bidRequest)`.
- * - Returns the (possibly) mutated `imp` to the converter.
+ * ORTB `imp` customizer for the converter. Keeps every media type the ad unit
+ * declared - the adslot decides which one bids - and sets `imp.tagid` from
+ * `params.adslotId`. Floors are left to the price floors module, which writes
+ * `imp.bidfloor` and a floor per media type; the endpoint applies the one for
+ * the adslot's media type.
  *
  * @param {Function} buildImp         Base imp builder provided by the converter.
  * @param {BidRequest} bidRequest     The originating Prebid bidRequest for this imp.
@@ -584,65 +395,18 @@ function impFn(buildImp, bidRequest, context) {
   const imp = buildImp(bidRequest, context);
   const params = bidRequest.params;
 
-  imp.tagid = params.adslotId;
-
-  applyFloorToImp(imp, bidRequest);
+  // ORTB requires a string; params may carry a number.
+  imp.tagid = String(params.adslotId);
 
   return imp;
 }
 
 /**
- * Apply Price Floors to a single ORTB `imp`.
- *
- * Behavior:
- * - Clears any previously set imp.bidfloor/bidfloorcur (e.g., from default processors).
- * - No-op when `bidRequest.getFloor` is missing.
- * - Uses `derivePrimaryMediaType(bidRequest)` to select the mediaType (defaults to `'*'`).
- * - For banner: if exactly one size exists, passes `[w, h]`; otherwise passes `'*'`.
- *   For video: always passes `'*'`.
- * - Calls `getFloor({ currency: CURRENCY_CODE, mediaType, size })`.
- * - Sets `imp.bidfloor` and `imp.bidfloorcur` when currency matches and floor is finite.
- *
- * @param {Object} imp                OpenRTB impression object to mutate.
- * @param {BidRequest} bidRequest     The originating Prebid bidRequest.
- * @returns {void}
- */
-function applyFloorToImp(imp, bidRequest) {
-  if (typeof bidRequest.getFloor !== 'function') return;
-
-  if ('bidfloor' in imp) {
-    delete imp.bidfloor;
-  }
-  if ('bidfloorcur' in imp) {
-    delete imp.bidfloorcur;
-  }
-
-  const mediaType = derivePrimaryMediaType(bidRequest) || '*';
-
-  // size param: single banner size -> [w,h]; otherwise '*'. For video always '*'.
-  let sizeArg = '*';
-  if (mediaType !== 'video') {
-    const sizes = extractSizePairs(bidRequest);
-    if (sizes.length === 1) sizeArg = sizes[0];
-  }
-
-  const floor = bidRequest.getFloor({
-    currency: CURRENCY_CODE,
-    mediaType,
-    size: sizeArg
-  });
-
-  if (floor && floor.currency === CURRENCY_CODE && Number.isFinite(floor.floor)) {
-    imp.bidfloor = floor.floor;
-    imp.bidfloorcur = CURRENCY_CODE;
-  }
-}
-
-/**
- * Apply `netRevenue` from the bid response `seatbid[].bid[].ext.netRevenue`.
+ * Apply `netRevenue` from `seatbid[].bid[].ext.netrevenue`, which the endpoint sets
+ * from the supply partner's eCPM setting (net or gross). Defaults to gross.
  *
  * @param {Bid} resp  bid response to mutate
- * @param {Object} bid  - Raw ORTB bid (seatbid.bid[i])
+ * @param {Object} bid  raw ORTB bid (`seatbid[].bid[]`)
  * @returns {void}
  */
 function applyNetRevenue(resp, bid) {
