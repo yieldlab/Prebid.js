@@ -18,11 +18,8 @@ const ORTB_PATH = '/ortb';
 const BIDDER_CODE = 'yieldlab';
 const BID_RESPONSE_TTL_SEC = 300;
 const CURRENCY_CODE = 'EUR';
-/** Floor currencies the endpoint accepts; it converts USD itself. */
-const SUPPORTED_FLOOR_CURRENCIES = ['EUR', 'USD'];
 const OUTSTREAMPLAYER_URL = 'https://ad.adition.com/dynamic.ad?a=o193092&ma_loadEvent=ma-start-event';
 const GVLID = 70;
-const DIMENSION_SIGN = 'x';
 
 // Sent as ext.vm.client. The adserver supports native 1.1 but exempts our
 // requests from its version check (core declares 1.2). It answers native without
@@ -378,66 +375,11 @@ function applyVmExt(ortb, bidRequests, bidderReq) {
 }
 
 /**
- * The media type to look a floor up under: the ad unit's media type when it
- * declares exactly one of banner, video and native, and the wildcard when it
- * declares several or none, since there is then no single type to price.
- *
- * @param {BidRequest} bid
- * @returns {'banner'|'video'|'native'|'*'}
- */
-function floorMediaType(bid) {
-  const declared = ['banner', 'video', 'native'].filter((type) =>
-    Boolean(deepAccess(bid, `mediaTypes.${type}`))
-  );
-  return declared.length === 1 ? declared[0] : '*';
-}
-
-/**
- * Extract banner sizes as unique [w,h] pairs.
- * Prefers `mediaTypes.banner.sizes`; falls back to legacy `sizes`.
- * Accepts `[w,h]` or `[[w,h], …]`, flattens and de-duplicates (order-preserving).
- * Ignores malformed entries. Video sizes are handled via `mediaTypes.video.playerSize`.
- *
- * @param {BidRequest} bid
- * @returns {Array<[number, number]>} de-duplicated array of `[width, height]` pairs
- */
-function extractSizePairs(bid) {
-  const { mediaTypes } = bid;
-  const sizes = [];
-
-  if (mediaTypes && mediaTypes.banner && Array.isArray(mediaTypes.banner.sizes)) {
-    if (Array.isArray(mediaTypes.banner.sizes[0])) {
-      sizes.push(...mediaTypes.banner.sizes);
-    } else {
-      sizes.push(mediaTypes.banner.sizes);
-    }
-  } else if (Array.isArray(bid.sizes)) {
-    if (Array.isArray(bid.sizes[0])) {
-      sizes.push(...bid.sizes);
-    } else {
-      sizes.push(bid.sizes);
-    }
-  }
-
-  // dedupe
-  const sizeKey = (pair) =>
-    (Array.isArray(pair) && pair.length >= 2) ? (pair[0] + DIMENSION_SIGN + pair[1]) : '';
-  const seen = new Set();
-  const uniquePairs = [];
-  sizes.forEach((pair) => {
-    const key = sizeKey(pair);
-    if (key && !seen.has(key)) {
-      seen.add(key);
-      uniquePairs.push(pair);
-    }
-  });
-  return uniquePairs;
-}
-
-/**
  * ORTB `imp` customizer for the converter. Keeps every media type the ad unit
- * declared - the adslot decides which one bids - sets `imp.tagid` from
- * `params.adslotId` and applies the price floor.
+ * declared - the adslot decides which one bids - and sets `imp.tagid` from
+ * `params.adslotId`. Floors are left to the price floors module, which writes
+ * `imp.bidfloor` and a floor per media type; the endpoint applies the one for
+ * the adslot's media type.
  *
  * @param {Function} buildImp         Base imp builder provided by the converter.
  * @param {BidRequest} bidRequest     The originating Prebid bidRequest for this imp.
@@ -451,57 +393,7 @@ function impFn(buildImp, bidRequest, context) {
   // ORTB requires a string; params may carry a number.
   imp.tagid = String(params.adslotId);
 
-  applyFloorToImp(imp, bidRequest);
-
   return imp;
-}
-
-/**
- * Set `imp.bidfloor`/`bidfloorcur` from `getFloor`, replacing any core default.
- * The size is the ad unit's single banner size, else (and for video) `'*'`. Floors outside
- * SUPPORTED_FLOOR_CURRENCIES are dropped rather than sent unconverted; the
- * endpoint reads only this top-level pair, not the floors module's granular
- * `ext.bidfloor` copies.
- *
- * @param {Object} imp                OpenRTB impression object to mutate.
- * @param {BidRequest} bidRequest     The originating Prebid bidRequest.
- * @returns {void}
- */
-function applyFloorToImp(imp, bidRequest) {
-  if (typeof bidRequest.getFloor !== 'function') return;
-
-  if ('bidfloor' in imp) {
-    delete imp.bidfloor;
-  }
-  if ('bidfloorcur' in imp) {
-    delete imp.bidfloorcur;
-  }
-
-  const mediaType = floorMediaType(bidRequest);
-
-  let sizeArg = '*';
-  if (mediaType !== 'video') {
-    const sizes = extractSizePairs(bidRequest);
-    if (sizes.length === 1) sizeArg = sizes[0];
-  }
-
-  let floor;
-  try {
-    floor = bidRequest.getFloor({
-      currency: CURRENCY_CODE,
-      mediaType,
-      size: sizeArg
-    });
-  } catch (error) {
-    // Publisher floor code can throw; bid unfloored rather than lose the imp.
-    logWarn('yieldlab: unable to compute floor for bid', bidRequest, error);
-    return;
-  }
-
-  if (floor && Number.isFinite(floor.floor) && SUPPORTED_FLOOR_CURRENCIES.includes(floor.currency)) {
-    imp.bidfloor = floor.floor;
-    imp.bidfloorcur = floor.currency;
-  }
 }
 
 /**

@@ -634,154 +634,106 @@ describe('yieldlabBidAdapter (ORTB)', () => {
     });
   });
 
-  describe('applies floors (impFn)', () => {
-    it('sets bidfloor/bidfloorcur from getFloor (banner)', () => {
-      const bid = DEFAULT_REQUEST();
-      let lastArgs;
-      bid.getFloor = (args) => {
-        lastArgs = args;
-        return { currency: 'EUR', floor: 1.1 };
-      };
+  describe('floors', () => {
+    // The adapter computes no floors: the price floors module's converter
+    // processors write imp.bidfloor and a floor per media type, and the
+    // endpoint applies the one for the adslot's media type, ignoring any
+    // currency but EUR and USD.
 
-      const req = spec.buildRequests([bid], { auctionId: 'flo-bnr', timeout: 300 });
-      const ortb = req.data;
-
-      expect(lastArgs).to.deep.equal({ currency: 'EUR', mediaType: 'banner', size: [728, 90] });
-      expect(ortb.imp[0].bidfloor).to.equal(1.1);
-      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
-    });
-
-    it('sets bidfloor using "*" size for video (current behavior)', () => {
-      const bid = VIDEO_REQUEST();
-      let lastArgs;
-      bid.getFloor = (args) => {
-        lastArgs = args;
-        return { currency: 'EUR', floor: 2.5 };
-      };
-
-      const req = spec.buildRequests([bid], { auctionId: 'flo-vid', timeout: 300 });
-      const ortb = req.data;
-
-      expect(lastArgs.mediaType).to.equal('video');
-      expect(lastArgs.size).to.equal('*'); // matches current adapter logic
-      expect(ortb.imp[0].bidfloor).to.equal(2.5);
-      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
-    });
-
-    it('forwards a USD floor - the endpoint settles in USD too and converts internally', () => {
-      const bid = DEFAULT_REQUEST();
-      bid.getFloor = () => ({ currency: 'USD', floor: 3.3 });
-
-      const req = spec.buildRequests([bid], { auctionId: 'flo-usd', timeout: 300 });
-      const ortb = req.data;
-
-      expect(ortb.imp[0].bidfloor).to.equal(3.3);
-      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'USD');
-    });
-
-    it('does not set bidfloor when getFloor returns an unsupported currency', () => {
-      const bid = DEFAULT_REQUEST();
-      bid.getFloor = () => ({ currency: 'GBP', floor: 3.3 });
-
-      const req = spec.buildRequests([bid], { auctionId: 'flo-curr', timeout: 300 });
-      const ortb = req.data;
-
-      expect(ortb.imp[0]).to.not.have.property('bidfloor');
-      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
-    });
-
-    it('deletes the floor the converter already set when the currency is unsupported', () => {
+    it('sends the floor getFloor returns, asked for in EUR', () => {
       const bid = DEFAULT_REQUEST();
       const calls = [];
       bid.getFloor = (args) => {
         calls.push(args);
-        return { currency: 'GBP', floor: 4.5 };
+        return { currency: 'EUR', floor: 1.1 };
       };
 
-      const req = spec.buildRequests([bid], { auctionId: 'flo-gbp-delete', timeout: 300 });
-      const ortb = req.data;
+      const imp = spec.buildRequests([bid], { auctionId: 'flo-eur', timeout: 300 }).data.imp[0];
 
-      // The converter's floor processor already put the GBP floor on the imp; the adapter removes it.
-      expect(calls.length).to.be.greaterThan(1);
-      expect(ortb.imp[0]).to.not.have.property('bidfloor');
-      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
+      expect(calls.every(({ currency }) => currency === 'EUR')).to.equal(true);
+      expect(imp.bidfloor).to.equal(1.1);
+      expect(imp).to.have.property('bidfloorcur', 'EUR');
     });
 
-    it('leaves the granular floors the price floors module writes in place', () => {
-      // The endpoint ignores the floors module's per-format ext.bidfloor copies.
+    it('passes a floor in another currency through for the endpoint to convert or ignore', () => {
+      for (const currency of ['USD', 'GBP']) {
+        const bid = DEFAULT_REQUEST();
+        bid.getFloor = () => ({ currency, floor: 3.3 });
+
+        const imp = spec.buildRequests([bid], { auctionId: 'flo-cur', timeout: 300 }).data.imp[0];
+
+        expect(imp.bidfloor).to.equal(3.3);
+        expect(imp).to.have.property('bidfloorcur', currency);
+      }
+    });
+
+    it('sends a floor per media type of a multiformat ad unit', () => {
       const bid = DEFAULT_REQUEST();
-      bid.getFloor = ({ mediaType, size }) => {
-        if (Array.isArray(size)) return { currency: 'EUR', floor: 7 };
-        if (mediaType === 'banner') return { currency: 'EUR', floor: 6 };
-        return { currency: 'EUR', floor: 5 };
-      };
+      bid.mediaTypes.video = { playerSize: [[640, 480]], context: 'outstream' };
+      const floors = { '*': 1.0, banner: 2.0, video: 3.0 };
+      bid.getFloor = ({ mediaType, size }) =>
+        ({ currency: 'EUR', floor: Array.isArray(size) ? floors.banner : floors[mediaType] });
 
-      const req = spec.buildRequests([bid], { auctionId: 'flo-granular-eur', timeout: 300 });
-      const imp = req.data.imp[0];
+      const imp = spec.buildRequests([bid], { auctionId: 'flo-multiformat', timeout: 300 }).data.imp[0];
 
-      // Top level uses the single banner size, so [728, 90] -> 7.
-      expect(imp.bidfloor).to.equal(7);
-      expect(imp).to.have.property('bidfloorcur', 'EUR');
-      expect(imp.banner.format[0]).to.have.nested.property('ext.bidfloor', 7);
+      // The wildcard at the top level, each media type's own floor beside it.
+      expect(imp.bidfloor).to.equal(1.0);
+      expect(imp.banner).to.have.nested.property('ext.bidfloor', 2.0);
+      expect(imp.banner).to.have.nested.property('ext.bidfloorcur', 'EUR');
+      if (FEATURES.VIDEO) {
+        expect(imp.video).to.have.nested.property('ext.bidfloor', 3.0);
+      }
+    });
+
+    it('leaves out a media type floor that equals imp.bidfloor', () => {
+      // The endpoint falls back to imp.bidfloor when the media object has none.
+      const bid = DEFAULT_REQUEST();
+      bid.getFloor = () => ({ currency: 'EUR', floor: 1.5 });
+
+      const imp = spec.buildRequests([bid], { auctionId: 'flo-same', timeout: 300 }).data.imp[0];
+
+      expect(imp.bidfloor).to.equal(1.5);
+      expect(imp.banner).to.not.have.nested.property('ext.bidfloor');
     });
 
     it('keeps the imp, unfloored, when getFloor throws', () => {
-      // Publisher floor code can throw; uncaught, the converter would drop the imp.
+      // Publisher floor code can throw; the floors module catches it.
       const bid = DEFAULT_REQUEST();
       bid.getFloor = () => {
         throw new Error('floor provider exploded');
       };
 
-      const req = spec.buildRequests([bid], { auctionId: 'flo-throws', timeout: 300 });
-      const ortb = req.data;
+      const ortb = spec.buildRequests([bid], { auctionId: 'flo-throws', timeout: 300 }).data;
 
       expect(ortb.imp).to.be.an('array').with.length(1);
-      expect(ortb.imp[0].id).to.equal(bid.bidId);
       expect(ortb.imp[0].tagid).to.equal('1111');
       expect(ortb.imp[0]).to.not.have.property('bidfloor');
-      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
     });
 
-    it('passes "*" as size when the banner has more than one size', () => {
+    it('leaves the imp unfloored when the bid has no getFloor', () => {
       const bid = DEFAULT_REQUEST();
-      bid.mediaTypes.banner.sizes = [[728, 90], [800, 250]];
-      let lastArgs;
-      bid.getFloor = (args) => {
-        lastArgs = args;
-        return { currency: 'EUR', floor: 0.8 };
-      };
+      expect(bid.getFloor).to.equal(undefined);
 
-      const req = spec.buildRequests([bid], { auctionId: 'flo-multisize', timeout: 300 });
-      const ortb = req.data;
+      const imp = spec.buildRequests([bid], { auctionId: 'flo-nogetfloor', timeout: 300 }).data.imp[0];
 
-      expect(lastArgs).to.deep.equal({ currency: 'EUR', mediaType: 'banner', size: '*' });
-      expect(ortb.imp[0].bidfloor).to.equal(0.8);
-      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
+      expect(imp).to.not.have.property('bidfloor');
+      expect(imp).to.not.have.property('bidfloorcur');
     });
 
-    it('forwards every media type on a multiformat ad unit', () => {
-      const bid = DEFAULT_REQUEST();
-      bid.mediaTypes.video = { playerSize: [[640, 480]], context: 'outstream' };
-      let lastArgs;
-      bid.getFloor = (args) => {
-        lastArgs = args;
-        return { currency: 'EUR', floor: 1.7 };
-      };
+    it('leaves the imp unfloored when getFloor answers with no usable floor', () => {
+      for (const floor of [undefined, 0]) {
+        const bid = DEFAULT_REQUEST();
+        bid.getFloor = () => ({ currency: 'EUR', floor });
 
-      const req = spec.buildRequests([bid], { auctionId: 'flo-multiformat', timeout: 300 });
-      const ortb = req.data;
+        const imp = spec.buildRequests([bid], { auctionId: 'flo-none', timeout: 300 }).data.imp[0];
 
-      // No single media type to price against, so the wildcard floor.
-      expect(lastArgs.mediaType).to.equal('*');
-      expect(ortb.imp[0].bidfloor).to.equal(1.7);
-
-      // Every declared media type is sent; the adslot decides which one bids.
-      expect(ortb.imp[0]).to.have.property('banner');
-      if (FEATURES.VIDEO) {
-        expect(ortb.imp[0]).to.have.property('video');
+        expect(imp).to.not.have.property('bidfloor');
+        expect(imp).to.not.have.property('bidfloorcur');
       }
     });
+  });
 
+  describe('responses', () => {
     it('yields no bid when the response omits mtype', () => {
       // Core resolves the media type from mtype alone and drops the bid without it.
       const bid = DEFAULT_REQUEST();
@@ -805,40 +757,6 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       }, req);
 
       expect(res).to.have.length(0);
-    });
-
-    it('leaves the imp unfloored when the bid has no getFloor', () => {
-      const bid = DEFAULT_REQUEST();
-      expect(bid.getFloor).to.equal(undefined);
-
-      const req = spec.buildRequests([bid], { auctionId: 'flo-nogetfloor', timeout: 300 });
-      const ortb = req.data;
-
-      expect(ortb.imp[0]).to.not.have.property('bidfloor');
-      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
-    });
-
-    it('leaves the imp unfloored when getFloor answers with a non-finite floor', () => {
-      const bid = DEFAULT_REQUEST();
-      bid.getFloor = () => ({ currency: 'EUR', floor: undefined });
-
-      const req = spec.buildRequests([bid], { auctionId: 'flo-nonfinite', timeout: 300 });
-      const ortb = req.data;
-
-      expect(ortb.imp[0]).to.not.have.property('bidfloor');
-      expect(ortb.imp[0]).to.not.have.property('bidfloorcur');
-    });
-
-    it('forwards a zero floor, which the converter alone would have skipped', () => {
-      const bid = DEFAULT_REQUEST();
-      bid.getFloor = () => ({ currency: 'EUR', floor: 0 });
-
-      const req = spec.buildRequests([bid], { auctionId: 'flo-zero', timeout: 300 });
-      const ortb = req.data;
-
-      // The converter skips a falsy floor; the adapter keeps 0.
-      expect(ortb.imp[0].bidfloor).to.equal(0);
-      expect(ortb.imp[0]).to.have.property('bidfloorcur', 'EUR');
     });
   });
 
