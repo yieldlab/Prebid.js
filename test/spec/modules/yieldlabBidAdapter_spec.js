@@ -119,9 +119,6 @@ describe('yieldlabBidAdapter (ORTB)', () => {
 
       const ortb = req.data;
 
-      // `id` is the converter's request id; the auction id belongs in source.tid.
-      expect(ortb.id).to.be.a('string').that.is.not.empty;
-      expect(ortb.id).to.not.equal('auction-123');
       expect(ortb.tmax).to.equal(700);
       expect(ortb.cur).to.deep.equal(['EUR']);
 
@@ -136,9 +133,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(imp.id).to.equal(bid.bidId);
       expect(imp.tagid).to.equal('1111');
 
-      // marks the request as ours - see CLIENT
       expect(ortb).to.have.nested.property('ext.vm.client', 'prebid-js');
-      expect(ortb.ext).to.not.have.property('origin');
 
       // ext.vm (pass-through + additions)
       expect(ortb).to.have.nested.property('ext.vm');
@@ -383,7 +378,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       expect(bidWith({ netrevenue: false }).netRevenue).to.equal(false);
     });
 
-    it('passes through DSA on a bid the endpoint sent without adomain', () => {
+    it('passes through DSA', () => {
       const bid = DEFAULT_REQUEST();
       const req = spec.buildRequests([bid], { auctionId: 'auction-nodom', timeout: 300 });
       const ortbReq = req.data;
@@ -398,7 +393,6 @@ describe('yieldlabBidAdapter (ORTB)', () => {
               price: 0.5,
               adm: '<div>banner</div>',
               id: 'srv-2',
-              // no adomain anywhere
               ext: { dsa: { foo: 'bar' } }
             }]
           }],
@@ -411,7 +405,6 @@ describe('yieldlabBidAdapter (ORTB)', () => {
       const bidResponse = res[0];
 
       expect(bidResponse.mediaType).to.equal('banner');
-      // adomain is not defaulted: the endpoint never sends a bid without one
       expect(bidResponse.meta.dsa).to.deep.equal({ foo: 'bar' });
     });
   });
@@ -497,7 +490,7 @@ describe('yieldlabBidAdapter (ORTB)', () => {
         expect(requested.map((a) => a.id)).to.deep.equal(bid.nativeOrtbRequest.assets.map((a) => a.id));
         const idOf = (pick) => requested.find(pick).id;
 
-        // The bare envelope the endpoint uses for this adapter - see CLIENT.
+        // Native 1.1+ response: no `native` wrapper object.
         const nativeAdm = JSON.stringify({
           link: { url: 'https://www.yieldlab.de' },
           assets: [

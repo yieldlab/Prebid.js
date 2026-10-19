@@ -6,6 +6,8 @@ import { ortbConverter } from '../libraries/ortbConverter/converter.js';
 
 /**
  * @typedef {import('../src/adapters/bidderFactory.js').BidRequest} BidRequest
+ * @typedef {import('./yieldlabBidAdapter.d.ts').YieldlabBidderParams} YieldlabBidderParams
+ * @typedef {BidRequest & { params: YieldlabBidderParams }} YieldlabBidRequest
  * @typedef {import('../src/adapters/bidderFactory.js').Bid} Bid
  * @typedef {import('../src/adapters/bidderFactory.js').ServerResponse} ServerResponse
  * @typedef {import('../src/adapters/bidderFactory.js').ServerRequest} ServerRequest
@@ -21,10 +23,7 @@ const CURRENCY_CODE = 'EUR';
 const OUTSTREAMPLAYER_URL = 'https://ad.adition.com/dynamic.ad?a=o193092&ma_loadEvent=ma-start-event';
 const GVLID = 70;
 
-// Sent as ext.vm.client. The adserver supports native 1.1 but exempts our
-// requests from its version check (core declares 1.2). It answers native without
-// a `native` wrapper object, as Native 1.1 and newer specify, which is what
-// Prebid parses.
+// Sent as ext.vm.client to identify where the traffic comes from.
 const CLIENT = 'prebid-js';
 
 /**
@@ -101,7 +100,7 @@ export const spec = {
   /**
    * Validate the incoming bid params.
    * Requires both `adslotId` and `supplyId`.
-   * @param {object} bid
+   * @param {YieldlabBidRequest} bid
    * @returns {boolean}
    */
   isBidRequestValid(bid) {
@@ -110,7 +109,7 @@ export const spec = {
 
   /**
    * Build the ORTB request via Prebid’s converter.
-   * @param {BidRequest[]} validBidRequests
+   * @param {YieldlabBidRequest[]} validBidRequests
    * @param {*} bidderRequest
    * @returns {ServerRequest|ServerRequest[]}
    */
@@ -261,7 +260,7 @@ function kvToQueryString(obj) {
 /**
  * Merge all params.targeting objects across adunits, later values overwrite earlier values.
  *
- * @param {BidRequest[]} bidRequests
+ * @param {YieldlabBidRequest[]} bidRequests
  * @returns {Object}
  */
 function mergeKeyValues(bidRequests) {
@@ -326,7 +325,7 @@ function applySchain(ortb) {
  * the comma-separated string OpenRTB defines, as /yp did.
  *
  * @param {Object} ortb              The OpenRTB request object to mutate.
- * @param {BidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
+ * @param {YieldlabBidRequest[]} bidRequests Valid bid requests (to read params.iabContent from).
  * @returns {void}
  */
 function applyIabContent(ortb, bidRequests) {
@@ -387,7 +386,7 @@ function applyVmExt(ortb, bidRequests, bidderReq) {
  * the adslot's media type.
  *
  * @param {Function} buildImp         Base imp builder provided by the converter.
- * @param {BidRequest} bidRequest     The originating Prebid bidRequest for this imp.
+ * @param {YieldlabBidRequest} bidRequest     The originating Prebid bidRequest for this imp.
  * @param {Object} context            Converter context for building the imp.
  * @returns {Object}                  The finalized OpenRTB `imp` object.
  */
